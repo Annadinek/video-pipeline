@@ -39,6 +39,11 @@ def download(video_id):
         # Разрешаем yt-dlp скачать «решатель» JS-challenge (EJS) с GitHub —
         # без него свежий YouTube отдаёт только картинки, а не видео.
         "--remote-components", "ejs:github",
+        # Форсируем IPv4: у серверов GitHub часто сломан IPv6 к серверам YouTube
+        # (ошибка «Network is unreachable»), из-за чего закачка байтов срывается.
+        "--force-ipv4",
+        # Дадим сети «продышаться» между попытками, если что-то моргнёт.
+        "--retries", "5", "--fragment-retries", "5",
         "-o", out_template,
         f"https://www.youtube.com/watch?v={video_id}",
     ]
