@@ -32,6 +32,9 @@ jobs:
       YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      # ВРЕМЕННО: модель распознавания речи. medium в 3-4 раза быстрее large-v3
+      # на процессоре, точность для русского всё ещё хорошая. Замерим и выберем.
+      WHISPER_MODEL: medium
     steps:
       - uses: actions/checkout@v4
 
