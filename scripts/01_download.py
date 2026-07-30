@@ -39,10 +39,8 @@ def download(video_id):
         # Разрешаем yt-dlp скачать «решатель» JS-challenge (EJS) с GitHub —
         # без него свежий YouTube отдаёт только картинки, а не видео.
         "--remote-components", "ejs:github",
-        # Форсируем IPv4: у серверов GitHub часто сломан IPv6 к серверам YouTube
-        # (ошибка «Network is unreachable»), из-за чего закачка байтов срывается.
-        "--force-ipv4",
-        # Дадим сети «продышаться» между попытками, если что-то моргнёт.
+        # IPv6 отключён на уровне системы (setup.sh) — идём по IPv4 без флага
+        # --force-ipv4, иначе бывает «Address family not supported».
         "--retries", "5", "--fragment-retries", "5",
         "-o", out_template,
         f"https://www.youtube.com/watch?v={video_id}",
@@ -53,10 +51,18 @@ def download(video_id):
     if os.path.exists(cookies):
         cmd += ["--cookies", cookies]
 
+    # Три попытки — на случай моргнувшей сети на конкретной машине GitHub.
     print("Запускаю:", " ".join(cmd))
-    subprocess.run(cmd, check=True)
-    state.mark_done(video_id, "01_download")
-    print("01_download: готово")
+    last_err = None
+    for attempt in range(1, 4):
+        r = subprocess.run(cmd)
+        if r.returncode == 0 and os.path.exists(os.path.join(WORK_DIR, "00_raw.mp4")):
+            state.mark_done(video_id, "01_download")
+            print("01_download: готово")
+            return
+        last_err = r.returncode
+        print(f"01_download: попытка {attempt} не удалась (код {r.returncode}), пробую ещё раз…")
+    raise SystemExit(f"01_download: скачать не удалось после 3 попыток (код {last_err})")
 
 
 if __name__ == "__main__":

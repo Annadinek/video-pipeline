@@ -6,6 +6,12 @@ set -euo pipefail
 echo "===== Проверка свободного места ДО установки ====="
 df -h . | tail -1
 
+echo "===== Отключаем IPv6 (у серверов GitHub он часто сломан к серверам YouTube) ====="
+# Без этого скачивание срывается: то «Network is unreachable», то «Address family
+# not supported». С отключённым IPv6 всё идёт по IPv4 стабильно.
+sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+
 echo "===== Ставим ffmpeg ====="
 sudo apt-get update -qq
 # ffmpeg из репозитория Ubuntu собран с libvidstab (стабилизация) — проверим ниже.
