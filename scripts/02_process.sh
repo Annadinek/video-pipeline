@@ -37,19 +37,27 @@ ffmpeg -y -i "$CUT" \
   -vf "vidstabdetect=shakiness=8:accuracy=15:result=$TRF" \
   -f null -
 
-# --- Собираем видео-цепочку (стабилизация -> резкость -> [цвет]) ---
-# ВРЕМЕННО: ретушь кожи (smartblur) УБРАНА — на этом видео она замыливала лицо.
-# Вместо неё усиленная резкость (unsharp), чтобы лицо было чётким. Мягкую ретушь
-# вернём позже на аккуратном уровне. Заодно без smartblur пересжатие быстрее.
+# Вшиваемые субтитры (стильные, с подсветкой слов), если готовы (шаг 05).
+ASS="review/subs.ass"
+if [ -f "$ASS" ]; then
+  echo "Субтитры: вшиваю $ASS (по центру, без плашки, с подсветкой слов)"
+  SUBFILTER="subtitles=$ASS,"
+else
+  echo "Субтитры: файл $ASS не найден — вшивать нечего"
+  SUBFILTER=""
+fi
+
+# --- Собираем видео-цепочку (стабилизация -> резкость -> [цвет] -> субтитры) ---
+# Ретушь кожи (smartblur) убрана — она замыливала лицо. Резкость усилена.
 VCHAIN="[0:v]vidstabtransform=input=$TRF:smoothing=30:optzoom=1:zoom=0:crop=black:interpol=linear,\
-unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=1.4:chroma_amount=0.0[pic];"
+unsharp=luma_msize_x=7:luma_msize_y=7:luma_amount=2.2:chroma_amount=0.0[pic];"
 
 if [ -f "$LUT" ]; then
   echo "Цвет: применяю LUT $LUT (на 50%)"
-  VCHAIN="$VCHAIN [pic]split[base][tolut];[tolut]lut3d=file='$LUT'[lutted];[base][lutted]blend=all_mode=normal:all_opacity=0.5,format=yuv420p[vout]"
+  VCHAIN="$VCHAIN [pic]split[base][tolut];[tolut]lut3d=file='$LUT'[lutted];[base][lutted]blend=all_mode=normal:all_opacity=0.5,${SUBFILTER}format=yuv420p[vout]"
 else
   echo "Цвет: LUT ещё не выбран ($LUT нет) — пропускаю цветокоррекцию"
-  VCHAIN="$VCHAIN [pic]format=yuv420p[vout]"
+  VCHAIN="$VCHAIN [pic]${SUBFILTER}format=yuv420p[vout]"
 fi
 
 echo "===== Проход 2: одна команда — вся картинка и звук ====="
@@ -66,8 +74,13 @@ if [ -f "$MUSIC" ]; then
     -c:a aac -b:a 192k \
     "$FINAL"
 else
-  echo "Музыка: ещё не выбрана ($MUSIC нет) — обрабатываю только голос"
-  ACHAIN="[0:a]${DENOISE},highpass=f=80,lowpass=f=12000,loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
+  echo "Музыка: ещё не выбрана ($MUSIC нет) — обрабатываю только голос (громче и ближе)"
+  # equalizer +5 dB ~3 кГц — «присутствие», голос ближе; acompressor выравнивает и
+  # поднимает уровень; loudnorm I=-12 — заметно громче (было -14).
+  ACHAIN="[0:a]${DENOISE},highpass=f=90,lowpass=f=12000,\
+equalizer=f=3000:t=q:w=1.5:g=5,\
+acompressor=threshold=0.08:ratio=3:attack=15:release=180:makeup=2,\
+loudnorm=I=-12:TP=-1.5:LRA=9[aout]"
   ffmpeg -y -i "$CUT" \
     -filter_complex "$VCHAIN;$ACHAIN" \
     -map "[vout]" -map "[aout]" \

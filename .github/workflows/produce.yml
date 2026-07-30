@@ -59,17 +59,18 @@ jobs:
           echo "SRC=${VID:-$SRC}" >> "$GITHUB_ENV"
           ls -lh work/00_raw.mp4
 
-      - name: 2) Обработка (стабилизация, цвет, звук)
-        if: ${{ env.NO_VIDEO != '1' }}
-        run: bash scripts/02_process.sh
-
-      - name: 3) Расшифровка речи
+      # Сначала расшифровка и субтитры — чтобы обработка сразу ВШИЛА субтитры.
+      - name: 2) Расшифровка речи
         if: ${{ env.NO_VIDEO != '1' }}
         run: python3 scripts/03_transcribe.py
 
-      - name: 4) Субтитры
+      - name: 3) Субтитры (srt + стильные ass)
         if: ${{ env.NO_VIDEO != '1' }}
         run: python3 scripts/05_subtitles.py
+
+      - name: 4) Обработка (стабилизация, резкость, звук, субтитры)
+        if: ${{ env.NO_VIDEO != '1' }}
+        run: bash scripts/02_process.sh
 
       - name: 5) Отправка на проверку в Telegram
         if: ${{ env.NO_VIDEO != '1' }}
