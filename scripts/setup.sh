@@ -9,7 +9,7 @@ df -h . | tail -1
 echo "===== Ставим ffmpeg ====="
 sudo apt-get update -qq
 # ffmpeg из репозитория Ubuntu собран с libvidstab (стабилизация) — проверим ниже.
-sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+sudo apt-get install -y -qq ffmpeg fonts-dejavu-core unzip
 
 echo "===== Проверка ffmpeg и libvidstab ====="
 ffmpeg -hide_banner -version | head -1
@@ -35,6 +35,23 @@ python3 -m pip install --quiet \
 # ВРЕМЕННО: mediapipe нужен только для нарезок (Часть Б). В Части А не ставим,
 # чтобы не тратить время и место. Раскомментируем, когда дойдём до Shorts.
 # python3 -m pip install --quiet mediapipe
+
+# JS-движок для yt-dlp: свежий YouTube требует решать «n-challenge», иначе
+# доступны только картинки. deno — движок по умолчанию для yt-dlp EJS.
+echo "===== Ставим deno (JS-движок для yt-dlp) ====="
+if ! command -v deno >/dev/null 2>&1; then
+  curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
+  # Делаем deno видимым для следующих шагов workflow.
+  if [ -x "$HOME/.deno/bin/deno" ]; then
+    echo "$HOME/.deno/bin" >> "${GITHUB_PATH:-/dev/null}"
+    export PATH="$HOME/.deno/bin:$PATH"
+  fi
+fi
+if command -v deno >/dev/null 2>&1; then
+  deno --version | head -1
+else
+  echo "ВНИМАНИЕ: deno не установился — скачивание YouTube может не пройти"
+fi
 
 # Запасной вариант против блокировки yt-dlp: если задан секрет YT_COOKIES,
 # кладём его в work/cookies.txt (01_download.py подхватит автоматически).
