@@ -73,5 +73,12 @@ def transcribe(audio_path):
 
 
 if __name__ == "__main__":
-    audio = sys.argv[1] if len(sys.argv) > 1 else os.path.join(WORK_DIR, "03_final.mp4")
+    # ВАЖНО: расшифровываем ДО подмешивания музыки. В work/03_final.mp4 голос уже
+    # перемешан с приглушённой музыкой — это портит точность субтитров. Берём
+    # work/02_cut.mp4 (после вырезки пауз, но без музыки). Если его нет — 00_raw.
+    if len(sys.argv) > 1 and sys.argv[1]:
+        audio = sys.argv[1]
+    else:
+        cut = os.path.join(WORK_DIR, "02_cut.mp4")
+        audio = cut if os.path.exists(cut) else os.path.join(WORK_DIR, "00_raw.mp4")
     transcribe(audio)

@@ -1,0 +1,71 @@
+# produce.yml — берёт самое старое сырое видео, обрабатывает длинное видео
+# и присылает Анне в Telegram на проверку (Круг 1). Публикацию делает poll.yml
+# после ответа «ОК».
+name: produce
+
+on:
+  # Раз в сутки ночью. 01:00 UTC = 04:00 Стамбул.
+  schedule:
+    - cron: "0 1 * * *"
+  # Ручной запуск (кнопкой или из бота). Можно задать конкретный video_id.
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "ID видео (пусто = взять самое старое из «Клауд сырое»)"
+        required: false
+        default: ""
+
+# Один общий замок с poll.yml — чтобы не драться за state.json и getUpdates.
+concurrency:
+  group: pipeline
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    permissions:
+      contents: write
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Свободное место до старта
+        run: df -h .
+
+      - name: Установка инструментов
+        run: bash scripts/setup.sh
+
+      - name: Обработка длинного видео и отправка на проверку
+        working-directory: scripts
+        run: |
+          set -euo pipefail
+          VID="${{ github.event.inputs.video_id }}"
+          # Скачивание (сам возьмёт самое старое, если VID пуст).
+          python3 01_download.py "$VID"
+          # Если качать было нечего — 00_raw.mp4 не появится, выходим спокойно.
+          if [ ! -f ../work/00_raw.mp4 ]; then
+            echo "Новых видео нет — выходим."
+            exit 0
+          fi
+          # Определяем, какое видео взяли (для отметок состояния).
+          SRC=$(python3 -c "import importlib,sys; m=importlib.import_module('00_pick_video'); it=m.pick_oldest(); print(it['video_id'] if it else '')")
+          bash 02_process.sh
+          python3 03_transcribe.py
+          python3 05_subtitles.py
+          python3 06_review_send.py "${VID:-$SRC}"
+
+      - name: Журнал + сохранить состояние
+        if: always()
+        run: |
+          echo "$(date -u '+%Y-%m-%d %H:%M UTC') — produce, свободно: $(df -h . | tail -1 | awk '{print $4}')" >> log.md
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add log.md state.json review 2>/dev/null || true
+          git commit -m "produce: обработка и отправка на проверку" || echo "нечего коммитить"
+          git push || echo "push не удался"

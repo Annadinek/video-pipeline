@@ -2,21 +2,26 @@
 # 01_download.py — скачивает сырое видео с YouTube через yt-dlp.
 # Берём в работу ТОЛЬКО видео из приватного плейлиста «Клауд сырое».
 # Всё, что вне плейлиста, не трогаем никогда.
+#
+# Если ID не передан — сам берём САМОЕ СТАРОЕ ещё не обработанное видео
+# из плейлиста (через 00_pick_video.py). Аргумент-ID остаётся как ручной обход.
 
+import importlib
 import os
 import subprocess
 import sys
 
+import config
 import state
 
-# Плейлист исходников «Клауд сырое» (приватный) — из CLAUDE.md.
-RAW_PLAYLIST_ID = "PLcnoqDt-qFI4"
+WORK_DIR = config.WORK_DIR
 
-WORK_DIR = os.environ.get("WORK_DIR", "work")
+# Модуль называется 00_pick_video (начинается с цифры) — импортируем через importlib.
+pick_mod = importlib.import_module("00_pick_video")
 
 
 def download(video_id):
-    """Скачивает одно видео в максимальном доступном качестве в work/00_raw.*"""
+    """Скачивает одно видео в максимальном доступном качестве в work/00_raw.mp4"""
     os.makedirs(WORK_DIR, exist_ok=True)
     out_template = os.path.join(WORK_DIR, "00_raw.%(ext)s")
 
@@ -26,6 +31,7 @@ def download(video_id):
 
     # Разрешение исходника всегда 1080p30 (решение из CLAUDE.md: съёмка через QuickTake).
     # -f bv*+ba/b — лучшее видео+звук. Качество не уменьшаем.
+    # Видео «по ссылке» (unlisted) качается по URL без авторизации.
     cmd = [
         "yt-dlp",
         "-f", "bv*+ba/b",
@@ -33,9 +39,12 @@ def download(video_id):
         "-o", out_template,
         f"https://www.youtube.com/watch?v={video_id}",
     ]
-    # ВРЕМЕННО: приватный плейлист требует авторизации (cookies или oauth).
-    # Пока запускаем по одному video_id вручную/из бота. Автоматический обход
-    # плейлиста «Клауд сырое» подключим на живом тесте, когда будут ключи.
+    # Запасной вариант против блокировки с IP GitHub: если задан секрет YT_COOKIES,
+    # setup.sh кладёт его в work/cookies.txt, и мы передаём его yt-dlp.
+    cookies = os.path.join(WORK_DIR, "cookies.txt")
+    if os.path.exists(cookies):
+        cmd += ["--cookies", cookies]
+
     print("Запускаю:", " ".join(cmd))
     subprocess.run(cmd, check=True)
     state.mark_done(video_id, "01_download")
@@ -43,7 +52,13 @@ def download(video_id):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: 01_download.py <youtube_video_id>")
-        sys.exit(2)
-    download(sys.argv[1])
+    if len(sys.argv) >= 2 and sys.argv[1]:
+        vid = sys.argv[1]
+    else:
+        it = pick_mod.pick_oldest()
+        if not it:
+            print("Новых видео в плейлисте «Клауд сырое» нет.")
+            sys.exit(0)
+        vid = it["video_id"]
+        print(f"Взял самое старое видео: {it['title']} ({vid})")
+    download(vid)
