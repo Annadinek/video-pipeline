@@ -9,7 +9,7 @@ df -h . | tail -1
 echo "===== Ставим ffmpeg ====="
 sudo apt-get update -qq
 # ffmpeg из репозитория Ubuntu собран с libvidstab (стабилизация) — проверим ниже.
-sudo apt-get install -y -qq ffmpeg
+sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
 
 echo "===== Проверка ffmpeg и libvidstab ====="
 ffmpeg -hide_banner -version | head -1
