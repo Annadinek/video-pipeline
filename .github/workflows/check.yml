@@ -1,0 +1,31 @@
+# check.yml — быстрая проверка связи. Запускается вручную (кнопкой или мной).
+# Проверяет доступ к YouTube (печатает название канала) и Telegram (шлёт «Проверка связи ✅»).
+name: check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка библиотек
+        run: |
+          python3 -m pip install --quiet requests \
+            google-api-python-client google-auth google-auth-httplib2
+
+      - name: Проверка YouTube (название канала)
+        working-directory: scripts
+        run: python3 yt_auth.py
+
+      - name: Проверка Telegram (сообщение Анне)
+        working-directory: scripts
+        run: python3 tg.py
