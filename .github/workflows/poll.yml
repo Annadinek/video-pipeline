@@ -33,13 +33,13 @@ jobs:
             google-api-python-client google-auth google-auth-httplib2
 
       - name: Проверить ответ и, если «ОК», опубликовать
-        working-directory: scripts
         run: |
           set -euo pipefail
-          DECISION=$(python3 07_review_poll.py | tail -1)
+          # Из корня репозитория — чтобы state.json и review/ были там же, где у produce.
+          DECISION=$(python3 scripts/07_review_poll.py | tail -1)
           echo "Решение: $DECISION"
           case "$DECISION" in
-            PUBLISH:*) python3 08_publish.py ;;
+            PUBLISH:*) python3 scripts/08_publish.py ;;
             *) echo "Публиковать нечего." ;;
           esac
 

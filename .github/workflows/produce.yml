@@ -42,23 +42,24 @@ jobs:
         run: bash scripts/setup.sh
 
       - name: Обработка длинного видео и отправка на проверку
-        working-directory: scripts
         run: |
           set -euo pipefail
+          # Все скрипты запускаем из корня репозитория, чтобы папки work/, review/,
+          # state.json были в одном месте.
           VID="${{ github.event.inputs.video_id }}"
           # Скачивание (сам возьмёт самое старое, если VID пуст).
-          python3 01_download.py "$VID"
+          python3 scripts/01_download.py "$VID"
           # Если качать было нечего — 00_raw.mp4 не появится, выходим спокойно.
-          if [ ! -f ../work/00_raw.mp4 ]; then
+          if [ ! -f work/00_raw.mp4 ]; then
             echo "Новых видео нет — выходим."
             exit 0
           fi
           # Определяем, какое видео взяли (для отметок состояния).
-          SRC=$(python3 -c "import importlib,sys; m=importlib.import_module('00_pick_video'); it=m.pick_oldest(); print(it['video_id'] if it else '')")
-          bash 02_process.sh
-          python3 03_transcribe.py
-          python3 05_subtitles.py
-          python3 06_review_send.py "${VID:-$SRC}"
+          SRC=$(python3 -c "import sys; sys.path.insert(0,'scripts'); import importlib; m=importlib.import_module('00_pick_video'); it=m.pick_oldest(); print(it['video_id'] if it else '')")
+          bash scripts/02_process.sh
+          python3 scripts/03_transcribe.py
+          python3 scripts/05_subtitles.py
+          python3 scripts/06_review_send.py "${VID:-$SRC}"
 
       - name: Журнал + сохранить состояние
         if: always()
