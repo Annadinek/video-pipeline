@@ -37,10 +37,12 @@ ffmpeg -y -i "$CUT" \
   -vf "vidstabdetect=shakiness=8:accuracy=15:result=$TRF" \
   -f null -
 
-# --- Собираем видео-цепочку (стабилизация -> ретушь -> резкость -> [цвет]) ---
+# --- Собираем видео-цепочку (стабилизация -> резкость -> [цвет]) ---
+# ВРЕМЕННО: ретушь кожи (smartblur) УБРАНА — на этом видео она замыливала лицо.
+# Вместо неё усиленная резкость (unsharp), чтобы лицо было чётким. Мягкую ретушь
+# вернём позже на аккуратном уровне. Заодно без smartblur пересжатие быстрее.
 VCHAIN="[0:v]vidstabtransform=input=$TRF:smoothing=30:optzoom=1:zoom=0:crop=black:interpol=linear,\
-smartblur=luma_radius=3.0:luma_strength=0.40:luma_threshold=20:chroma_radius=3.0:chroma_strength=0.20:chroma_threshold=20,\
-unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.80:chroma_amount=0.0[pic];"
+unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=1.4:chroma_amount=0.0[pic];"
 
 if [ -f "$LUT" ]; then
   echo "Цвет: применяю LUT $LUT (на 50%)"
