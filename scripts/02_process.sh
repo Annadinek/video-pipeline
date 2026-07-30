@@ -26,8 +26,9 @@ DENOISE="${DENOISE:-afftdn=nf=-25}"           # ВРЕМЕННО, лучший �
 # -----------------------------------------------------------
 
 echo "===== Шаг 2: вырезаем паузы (auto-editor) ====="
-auto-editor "$RAW" --silent-threshold 0.04 --frame-margin 6 \
-  --no-open --output "$CUT"
+# auto-editor v29+ сменил флаги: вместо --silent-threshold/--frame-margin
+# используем --margin (запас 0.2 c вокруг речи, чтобы не резать дыхание внутри фразы).
+auto-editor "$RAW" --margin 0.2sec --no-open --output "$CUT"
 
 echo "===== Проход 1: замер тряски (vidstabdetect) ====="
 ffmpeg -y -i "$CUT" \
