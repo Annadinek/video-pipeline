@@ -44,25 +44,36 @@ jobs:
       - name: Установка инструментов
         run: bash scripts/setup.sh
 
-      - name: Обработка длинного видео и отправка на проверку
+      # Разбито на отдельные шаги — чтобы в статусе GitHub было видно, где мы и где тормозит.
+      - name: 1) Скачивание видео
         run: |
           set -euo pipefail
-          # Все скрипты запускаем из корня репозитория, чтобы папки work/, review/,
-          # state.json были в одном месте.
           VID="${{ github.event.inputs.video_id }}"
-          # Скачивание (сам возьмёт самое старое, если VID пуст).
           python3 scripts/01_download.py "$VID"
-          # Если качать было нечего — 00_raw.mp4 не появится, выходим спокойно.
           if [ ! -f work/00_raw.mp4 ]; then
             echo "Новых видео нет — выходим."
+            echo "NO_VIDEO=1" >> "$GITHUB_ENV"
             exit 0
           fi
-          # Определяем, какое видео взяли (для отметок состояния).
           SRC=$(python3 -c "import sys; sys.path.insert(0,'scripts'); import importlib; m=importlib.import_module('00_pick_video'); it=m.pick_oldest(); print(it['video_id'] if it else '')")
-          bash scripts/02_process.sh
-          python3 scripts/03_transcribe.py
-          python3 scripts/05_subtitles.py
-          python3 scripts/06_review_send.py "${VID:-$SRC}"
+          echo "SRC=${VID:-$SRC}" >> "$GITHUB_ENV"
+          ls -lh work/00_raw.mp4
+
+      - name: 2) Обработка (стабилизация, цвет, звук)
+        if: ${{ env.NO_VIDEO != '1' }}
+        run: bash scripts/02_process.sh
+
+      - name: 3) Расшифровка речи
+        if: ${{ env.NO_VIDEO != '1' }}
+        run: python3 scripts/03_transcribe.py
+
+      - name: 4) Субтитры
+        if: ${{ env.NO_VIDEO != '1' }}
+        run: python3 scripts/05_subtitles.py
+
+      - name: 5) Отправка на проверку в Telegram
+        if: ${{ env.NO_VIDEO != '1' }}
+        run: python3 scripts/06_review_send.py "$SRC"
 
       - name: Журнал + сохранить состояние
         if: always()
