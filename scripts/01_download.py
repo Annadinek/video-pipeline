@@ -36,6 +36,9 @@ def download(video_id):
         "yt-dlp",
         "-f", "bv*+ba/b",
         "--merge-output-format", "mp4",
+        # Разрешаем yt-dlp скачать «решатель» JS-challenge (EJS) с GitHub —
+        # без него свежий YouTube отдаёт только картинки, а не видео.
+        "--remote-components", "ejs:github",
         "-o", out_template,
         f"https://www.youtube.com/watch?v={video_id}",
     ]
