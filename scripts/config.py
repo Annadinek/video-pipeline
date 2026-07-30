@@ -23,8 +23,12 @@ STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 
 
 def require_env(name):
-    """Вернуть секрет из окружения или понятно упасть, если его нет."""
+    """Вернуть секрет из окружения или понятно упасть, если его нет.
+    Обрезаем пробелы/переносы строк — при вставке в GitHub Secrets они часто
+    цепляются в конце и ломают ключ (например, Client ID перестаёт распознаваться)."""
     val = os.environ.get(name)
+    if val:
+        val = val.strip()
     if not val:
         raise SystemExit(
             f"Нет секрета {name}. Добавь его в GitHub Secrets "
