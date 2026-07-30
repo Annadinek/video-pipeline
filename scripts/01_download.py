@@ -25,8 +25,13 @@ def download(video_id):
     os.makedirs(WORK_DIR, exist_ok=True)
     out_template = os.path.join(WORK_DIR, "00_raw.%(ext)s")
 
-    if state.is_done(video_id, "01_download"):
-        print(f"01_download: видео {video_id} уже скачано, пропускаем")
+    raw = os.path.join(WORK_DIR, "00_raw.mp4")
+    # Пропускаем скачивание, только если файл уже есть НА ЭТОЙ машине (защита от
+    # повтора внутри одного запуска). По state.json НЕ проверяем: машина GitHub
+    # стирается между запусками, а state.json сохраняется — иначе повторный запуск
+    # решил бы «уже скачано», хотя файла нет, и вся обработка пропускалась бы.
+    if os.path.exists(raw):
+        print("01_download: файл уже есть на этой машине, пропускаем скачивание")
         return
 
     # Разрешение исходника всегда 1080p30 (решение из CLAUDE.md: съёмка через QuickTake).
@@ -56,8 +61,7 @@ def download(video_id):
     last_err = None
     for attempt in range(1, 4):
         r = subprocess.run(cmd)
-        if r.returncode == 0 and os.path.exists(os.path.join(WORK_DIR, "00_raw.mp4")):
-            state.mark_done(video_id, "01_download")
+        if r.returncode == 0 and os.path.exists(raw):
             print("01_download: готово")
             return
         last_err = r.returncode
