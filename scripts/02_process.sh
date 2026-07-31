@@ -25,12 +25,16 @@ LUT="${LUT:-luts/ТЁПЛЫЙ.cube}"                # ВРЕМЕННО, пока
 DENOISE="${DENOISE:-afftdn=nf=-25}"           # ВРЕМЕННО, лучший выберем на замере
 # -----------------------------------------------------------
 
-echo "===== Шаг 2: вырезка пауз ВРЕМЕННО ОТКЛЮЧЕНА ====="
-# ВРЕМЕННО: auto-editor делает медленное полное пересжатие и зависал у 100%.
-# Пока пропускаем — работаем на исходнике, конвейер становится быстрым и надёжным.
-# TODO: вернуть вырезку пауз как список кусков внутри одной команды ffmpeg (без
-# отдельного пересжатия) — так и требует CLAUDE.md (одно пересжатие).
-CUT="$RAW"
+echo "===== Шаг 2: паузы вырезаны заранее (02_cut_pauses.py) ====="
+# Вырезку пауз делает отдельный быстрый шаг 02_cut_pauses.py -> work/02_cut.mp4.
+# Здесь просто берём его результат. Если файла нет (шаг пропущен) — работаем на
+# исходнике, чтобы конвейер не падал.
+if [ -f "$CUT" ]; then
+  echo "Беру видео без пауз: $CUT"
+else
+  echo "02_cut.mp4 нет — работаю на исходнике $RAW"
+  CUT="$RAW"
+fi
 
 echo "===== Проход 1: замер тряски (vidstabdetect) ====="
 ffmpeg -y -i "$CUT" \
@@ -47,13 +51,25 @@ else
   SUBFILTER=""
 fi
 
-# --- Собираем видео-цепочку (стабилизация -> резкость -> [цвет] -> субтитры) ---
-# Ретушь кожи (smartblur) убрана. Резкость усилена сильнее (Анна просила чётче).
-# interpol=bicubic — более резкая интерполяция при стабилизации (меньше мыла),
-# unsharp: две ступени — крупная для контуров + мелкая для деталей лица.
+# --- Собираем видео-цепочку (стабилизация -> резкость -> тон -> [цвет] -> субтитры) ---
+# ПРОТИВ «ОТЁКА ЛИЦА»: прошлый вариант сильно тянул unsharp (1.6+1.4) — вокруг
+# лица появлялись светлые ореолы, из-за них лицо выглядело припухшим. Теперь:
+#  - cas (Contrast Adaptive Sharpen) — резкость БЕЗ ореолов, если фильтр доступен;
+#  - лёгкий unsharp — вернуть детали глаз/бровей, но без «пластики»;
+#  - eq — чуть больше контраста и чуть темнее: лицо перестаёт быть «отёкшим»,
+#    черты собираются, картинка выглядит чётче.
+if ffmpeg -hide_banner -filters 2>/dev/null | awk '{print $2}' | grep -qx cas; then
+  echo "Резкость: cas + лёгкий unsharp (без ореолов, против отёка)"
+  SHARP="cas=strength=0.7,unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.9:chroma_amount=0.0"
+else
+  echo "Резкость: unsharp (cas недоступен)"
+  SHARP="unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=1.1:chroma_amount=0.0,unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.9:chroma_amount=0.0"
+fi
+TONE="eq=contrast=1.07:saturation=1.05:brightness=-0.015"
+
 VCHAIN="[0:v]vidstabtransform=input=$TRF:smoothing=30:optzoom=1:zoom=0:crop=black:interpol=bicubic,\
-unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=1.6:chroma_amount=0.0,\
-unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=1.4:chroma_amount=0.0[pic];"
+$SHARP,\
+$TONE[pic];"
 
 if [ -f "$LUT" ]; then
   echo "Цвет: применяю LUT $LUT (на 50%)"
@@ -66,8 +82,10 @@ fi
 echo "===== Проход 2: одна команда — вся картинка и звук ====="
 if [ -f "$MUSIC" ]; then
   echo "Музыка: подмешиваю $MUSIC под голос"
+  # Музыка чуть громче (Анна просила): базовый уровень -9 dB (было -12). Под голосом
+  # она всё равно приглушается сайдчейном, в паузах слышна заметнее.
   ACHAIN="[0:a]${DENOISE},highpass=f=80,lowpass=f=12000[voice];\
-[1:a]volume=-12dB[musicbase];\
+[1:a]volume=-9dB[musicbase];\
 [musicbase][voice]sidechaincompress=threshold=0.03:ratio=8:attack=15:release=300:makeup=2:level_sc=1[duck];\
 [voice][duck]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[aout]"
   ffmpeg -y -i "$CUT" -stream_loop -1 -i "$MUSIC" \
