@@ -1,89 +1,74 @@
 #!/usr/bin/env python3
-# send_music.py — присылает Анне в Telegram музыкальные КАНДИДАТЫ, аудио-файлами,
-# чтобы можно было слушать прямо в боте. Источник — Pixabay (лицензия Pixabay
-# Content License: бесплатно для коммерции, треков НЕТ в системе Content ID —
-# YouTube их не блокирует при загрузке).
+# send_music.py — присылает Анне в Telegram музыкальные КАНДИДАТЫ аудио-файлами,
+# чтобы слушать прямо в боте.
 #
-# Как работает: со страницы трека на Pixabay достаём прямую ссылку на mp3
-# (тег og:audio) и отправляем через Telegram sendAudio по URL (Telegram сам
-# скачивает файл). Если mp3 достать не удалось — присылаем обычную ссылку.
+# Источник — incompetech.com (Kevin MacLeod). Лицензия Creative Commons BY 4.0:
+# бесплатно, в том числе для коммерции; условие — строка-подпись автора в описании
+# видео (её конвейер добавит сам, Анне делать ничего не нужно). Главное для Анны:
+# такую музыку YouTube при загрузке НЕ блокирует.
+#
+# Почему не Pixabay: Pixabay отдаёт mp3 только через свою кнопку и блокирует
+# скачивание с серверов (403), поэтому автоматика не может достать даже финальный
+# выбранный трек. incompetech качается напрямую — подходит для конвейера.
 
-import re
+import os
+import tempfile
+import urllib.parse
 
 import requests
 
 import tg
 
-UA = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
-    "Accept-Language": "ru,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml",
-}
+BASE = "https://incompetech.com/music/royalty-free/mp3-royaltyfree/"
+UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124 Safari/537.36"}
 
+# (номер-подпись, имя файла на incompetech)
 DARK = [
-    ("Тёмный 1 — Eerie Dark Ambience (напряжение)",
-     "https://pixabay.com/music/horror-scene-eerie-dark-ambience-for-tension-and-suspense-303395/"),
-    ("Тёмный 2 — Dark Horror Ambient (Dark Room)",
-     "https://pixabay.com/music/mystery-dark-horror-ambient-dark-room-133815/"),
-    ("Тёмный 3 — Horror Tension Background",
-     "https://pixabay.com/music/mystery-horror-tension-background-171540/"),
-    ("Тёмный 4 — Dark ambient (Horror Soundtrack)",
-     "https://pixabay.com/music/horror-scene-dark-ambient-horror-soundtrack-494700/"),
+    ("Тёмный 1 — Ossuary 5: Rest (мрачный эмбиент)", "Ossuary 5 - Rest"),
+    ("Тёмный 2 — Dark Times (зловещий)", "Dark Times"),
+    ("Тёмный 3 — Anguish (напряжение, хоррор)", "Anguish"),
+    ("Тёмный 4 — Darkling (тревожный)", "Darkling"),
 ]
-
 CALM = [
-    ("Спокойный 5 — Calm Meditation Music",
-     "https://pixabay.com/music/ambient-calm-meditation-music-for-relaxation-153307/"),
-    ("Спокойный 6 — Mindfulness Relaxation & Meditation",
-     "https://pixabay.com/music/ambient-mindfulness-relaxation-amp-meditation-music-22174/"),
-    ("Спокойный 7 — Relaxing Ambient Meditation",
-     "https://pixabay.com/music/meditationspiritual-relaxing-ambient-meditation-130460/"),
+    ("Спокойный 5 — Healing (тихий, обволакивающий)", "Healing"),
+    ("Спокойный 6 — Meditation Impromptu 03", "Meditation Impromptu 03"),
+    ("Спокойный 7 — Peace of Mind", "Peace of Mind"),
 ]
 
 
-def resolve_mp3(page_url):
-    """Достаём прямую ссылку на mp3 со страницы трека Pixabay."""
-    r = requests.get(page_url, headers=UA, timeout=30)
+def url_for(name):
+    return BASE + urllib.parse.quote(name) + ".mp3"
+
+
+def download(name):
+    r = requests.get(url_for(name), headers=UA, timeout=90)
     r.raise_for_status()
-    html = r.text
-    m = re.search(
-        r'<meta[^>]+property=["\']og:audio["\'][^>]+content=["\']([^"\']+?\.mp3[^"\']*)',
-        html)
-    if m:
-        return m.group(1).replace("&amp;", "&")
-    m = re.search(
-        r'(https://cdn\.pixabay\.com/(?:audio|download/audio)/[^"\']+?\.mp3[^"\']*)',
-        html)
-    if m:
-        return m.group(1).replace("&amp;", "&")
-    return None
+    fd, path = tempfile.mkstemp(suffix=".mp3")
+    with os.fdopen(fd, "wb") as f:
+        f.write(r.content)
+    return path
 
 
 def main():
     tg.send_message(
-        "Музыкальные кандидаты. Послушай прямо тут — нажимай ▶ на каждом файле.\n"
-        "Все треки с Pixabay: бесплатные, и YouTube их не блокирует при загрузке.\n\n"
+        "Музыкальные кандидаты — слушай прямо тут, нажимай ▶ на каждом файле.\n"
+        "Музыка бесплатная (Kevin MacLeod), YouTube при загрузке её НЕ блокирует. "
+        "Нужную строчку-подпись автора в описание я добавлю сам — тебе ничего делать не надо.\n\n"
         "Тёмные/страшные — 1–4. Спокойные — 5–7.\n\n"
-        "Напиши мне номера, которые понравились (можно несколько, из обеих групп) — "
-        "я их скачаю и буду накладывать. Меня об этом больше спрашивать не буду."
+        "Напиши номера, которые понравились (можно несколько из обеих групп) — "
+        "их и буду накладывать. Больше про музыку спрашивать не буду."
     )
     ok = 0
-    for title, page in DARK + CALM:
-        mp3 = None
+    for title, name in DARK + CALM:
         try:
-            mp3 = resolve_mp3(page)
+            path = download(name)
+            tg.send_audio(path, title=title, caption=title)
+            os.remove(path)
+            print(f"{title}: отправлен аудио-файлом")
+            ok += 1
         except Exception as e:
-            print(f"{title}: не смог открыть страницу ({e})")
-        if mp3:
-            try:
-                tg.send_audio(mp3, title=title, caption=title)
-                print(f"{title}: отправлен аудио-файлом")
-                ok += 1
-                continue
-            except Exception as e:
-                print(f"{title}: sendAudio по URL не прошёл ({e}) — шлю ссылку")
-        tg.send_message(f"{title}\n{page}")
+            print(f"{title}: не удалось ({e}) — шлю ссылку")
+            tg.send_message(f"{title}\n{url_for(name)}")
     print(f"send_music: аудио-файлами отправлено {ok} из {len(DARK) + len(CALM)}")
 
 
