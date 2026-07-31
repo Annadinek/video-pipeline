@@ -48,9 +48,12 @@ else
 fi
 
 # --- Собираем видео-цепочку (стабилизация -> резкость -> [цвет] -> субтитры) ---
-# Ретушь кожи (smartblur) убрана — она замыливала лицо. Резкость усилена.
-VCHAIN="[0:v]vidstabtransform=input=$TRF:smoothing=30:optzoom=1:zoom=0:crop=black:interpol=linear,\
-unsharp=luma_msize_x=7:luma_msize_y=7:luma_amount=2.2:chroma_amount=0.0[pic];"
+# Ретушь кожи (smartblur) убрана. Резкость усилена сильнее (Анна просила чётче).
+# interpol=bicubic — более резкая интерполяция при стабилизации (меньше мыла),
+# unsharp: две ступени — крупная для контуров + мелкая для деталей лица.
+VCHAIN="[0:v]vidstabtransform=input=$TRF:smoothing=30:optzoom=1:zoom=0:crop=black:interpol=bicubic,\
+unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=1.6:chroma_amount=0.0,\
+unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=1.4:chroma_amount=0.0[pic];"
 
 if [ -f "$LUT" ]; then
   echo "Цвет: применяю LUT $LUT (на 50%)"
