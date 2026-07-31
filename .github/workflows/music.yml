@@ -1,0 +1,23 @@
+# music.yml — присылает Анне музыкальные кандидаты в Telegram (аудио-файлами).
+# Запуск только вручную.
+name: music
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: music
+  cancel-in-progress: false
+
+jobs:
+  music:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотека requests
+        run: python3 -m pip install --quiet requests
+      - name: Отправить музыку в Telegram
+        run: python3 scripts/send_music.py
