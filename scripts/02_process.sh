@@ -58,16 +58,23 @@ fi
 #  - лёгкий unsharp — вернуть детали глаз/бровей, но без «пластики»;
 #  - eq — чуть больше контраста и чуть темнее: лицо перестаёт быть «отёкшим»,
 #    черты собираются, картинка выглядит чётче.
+# ПРОТИВ «ШТРИХОВКИ» НА ЛИЦЕ: сначала лёгкое разглаживание кожи (hqdn3d) — оно
+# убирает мелкий шум/штрихи, которые резкость превращала в «сетку» на лице. Потом
+# умеренная резкость (на ~15% слабее прежней) возвращает чёткость контуров и глаз —
+# картинка остаётся чёткой, но кожа чистая, не заштрихованная.
+SKIN="hqdn3d=1.8:1.4:6:6"
 if ffmpeg -hide_banner -filters 2>/dev/null | awk '{print $2}' | grep -qx cas; then
-  echo "Резкость: cas + лёгкий unsharp (без ореолов, против отёка)"
-  SHARP="cas=strength=0.7,unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.9:chroma_amount=0.0"
+  echo "Кожа: hqdn3d (лёгкое разглаживание) + cas + лёгкий unsharp (чётко, без штриховки)"
+  SHARP="cas=strength=0.55,unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.75:chroma_amount=0.0"
 else
-  echo "Резкость: unsharp (cas недоступен)"
-  SHARP="unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=1.1:chroma_amount=0.0,unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.9:chroma_amount=0.0"
+  echo "Кожа: hqdn3d + unsharp (cas недоступен)"
+  SHARP="unsharp=luma_msize_x=5:luma_msize_y=5:luma_amount=0.9:chroma_amount=0.0,unsharp=luma_msize_x=3:luma_msize_y=3:luma_amount=0.75:chroma_amount=0.0"
 fi
-TONE="eq=contrast=1.07:saturation=1.05:brightness=-0.015"
+# Тон мягче (было contrast 1.07 / brightness -0.015): меньше тяжёлых теней на лице.
+TONE="eq=contrast=1.05:saturation=1.04:brightness=-0.008"
 
 VCHAIN="[0:v]vidstabtransform=input=$TRF:smoothing=30:optzoom=1:zoom=0:crop=black:interpol=bicubic,\
+$SKIN,\
 $SHARP,\
 $TONE[pic];"
 

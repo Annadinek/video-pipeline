@@ -23,16 +23,17 @@ BASE = "https://incompetech.com/music/royalty-free/mp3-royaltyfree/"
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124 Safari/537.36"}
 
 # (номер-подпись, имя файла на incompetech)
+# Подборка в стиле треков Анны: кинематографично/эмоционально (Zimmer, secrets)
+# и тёмно/атмосферно (dark ambient). Все — Kevin MacLeod, CC BY, качаются, YouTube не блокирует.
 DARK = [
-    ("Тёмный 1 — Ossuary 5: Rest (мрачный эмбиент)", "Ossuary 5 - Rest"),
-    ("Тёмный 2 — Dark Times (зловещий)", "Dark Times"),
-    ("Тёмный 3 — Anguish (напряжение, хоррор)", "Anguish"),
-    ("Тёмный 4 — Darkling (тревожный)", "Darkling"),
+    ("Кино 1 — Reawakening (эмоциональная, нарастает)", "Reawakening"),
+    ("Кино 2 — Ascending the Vale (эпичная, в духе Zimmer)", "Ascending the Vale"),
+    ("Кино 3 — Crossing the Chasm (драматичная, нарастает)", "Crossing the Chasm"),
+    ("Кино 4 — Heartbreaking (печальная, фортепиано)", "Heartbreaking"),
 ]
 CALM = [
-    ("Спокойный 5 — Healing (тихий, обволакивающий)", "Healing"),
-    ("Спокойный 6 — Meditation Impromptu 03", "Meditation Impromptu 03"),
-    ("Спокойный 7 — Peace of Mind", "Peace of Mind"),
+    ("Тёмный 5 — Lightless Dawn (тёмная кинематографичная)", "Lightless Dawn"),
+    ("Тёмный 6 — The Descent (тёмная, атмосферная)", "The Descent"),
 ]
 
 
@@ -51,12 +52,12 @@ def download(name):
 
 def main():
     tg.send_message(
-        "Музыкальные кандидаты — слушай прямо тут, нажимай ▶ на каждом файле.\n"
-        "Музыка бесплатная (Kevin MacLeod), YouTube при загрузке её НЕ блокирует. "
-        "Нужную строчку-подпись автора в описание я добавлю сам — тебе ничего делать не надо.\n\n"
-        "Тёмные/страшные — 1–4. Спокойные — 5–7.\n\n"
-        "Напиши номера, которые понравились (можно несколько из обеих групп) — "
-        "их и буду накладывать. Больше про музыку спрашивать не буду."
+        "Новая подборка — в твоём стиле: кинематографично, эмоционально, темно "
+        "(близко к Zimmer / secrets / dark ambient). Слушай прямо тут, ▶ на каждом файле.\n"
+        "Всё бесплатное (Kevin MacLeod), YouTube при загрузке НЕ блокирует. "
+        "Строчку-подпись автора в описание добавлю сам — тебе делать ничего не надо.\n\n"
+        "Кинематографичные/эмоциональные — 1–4. Тёмные/атмосферные — 5–6.\n\n"
+        "Напиши номер того, что зашло, — наложу на видео."
     )
     ok = 0
     for title, name in DARK + CALM:
