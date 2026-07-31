@@ -44,9 +44,11 @@ jobs:
 
       - name: Уборка черновиков
         run: |
-          cd scripts
+          # Запускаем из КОРНЯ репозитория (а не из scripts/), иначе скрипт не
+          # найдёт закладку state.json, которая лежит в корне. Python сам добавит
+          # папку scripts/ в путь импорта, потому что там лежит сам скрипт.
           ARGS="${{ github.event.inputs.mode }}"
           if [ "${{ github.event.inputs.only_first }}" = "true" ]; then
             ARGS="$ARGS --only-first"
           fi
-          python3 cleanup_drafts.py $ARGS
+          python3 scripts/cleanup_drafts.py $ARGS
