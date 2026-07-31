@@ -1,0 +1,52 @@
+# cleanup.yml — уборка старых черновиков (unlisted-копий) с канала YouTube.
+# Запускается только вручную. По умолчанию — режим просмотра (ничего не удаляет).
+name: cleanup
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "list = только показать; delete = удалить старые черновики"
+        required: true
+        default: "list"
+        type: choice
+        options:
+          - list
+          - delete
+      only_first:
+        description: "Оставить ТОЛЬКО первую копию (иначе оставляем и первую, и последнюю)"
+        required: false
+        default: false
+        type: boolean
+
+# Отдельный замок (не мешаем produce/poll): скрипт только читает YouTube и
+# при delete удаляет черновики, к state.json/getUpdates не прикасается.
+concurrency:
+  group: cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установка python-библиотек Google
+        run: |
+          python3 -m pip install --quiet --upgrade pip
+          python3 -m pip install --quiet \
+            google-api-python-client google-auth-oauthlib google-auth-httplib2
+
+      - name: Уборка черновиков
+        run: |
+          cd scripts
+          ARGS="${{ github.event.inputs.mode }}"
+          if [ "${{ github.event.inputs.only_first }}" = "true" ]; then
+            ARGS="$ARGS --only-first"
+          fi
+          python3 cleanup_drafts.py $ARGS
