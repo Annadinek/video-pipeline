@@ -83,6 +83,11 @@ def main(source_video_id):
 
     # Сохраняем мелкие артефакты в review/ (переживут стирание машины).
     os.makedirs(REVIEW, exist_ok=True)
+    # Привязка субтитров к ЭТОМУ видео: 08_publish загрузит .srt только если он
+    # сделан именно для публикуемого видео (иначе тайминги не совпадут — например,
+    # после вырезки пауз длительность меняется).
+    with open(os.path.join(REVIEW, "subs_for.txt"), "w", encoding="utf-8") as f:
+        f.write(review_video_id)
     with open(os.path.join(REVIEW, "meta.json"), "w", encoding="utf-8") as f:
         json.dump({"source_video_id": source_video_id,
                    "review_video_id": review_video_id,

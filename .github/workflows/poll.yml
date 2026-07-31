@@ -50,4 +50,7 @@ jobs:
           git config user.email "bot@users.noreply.github.com"
           git add state.json review 2>/dev/null || true
           git commit -m "poll: обновление состояния проверки" || echo "нечего коммитить"
-          git push || echo "push не удался"
+          # Надёжный push с подтягиванием чужих коммитов и повтором.
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push origin main && { echo "push ок"; break; } || { echo "повтор push ($i)"; sleep $((i*3)); }
+          done

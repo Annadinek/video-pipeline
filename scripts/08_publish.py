@@ -34,12 +34,19 @@ def main():
     print("08: делаю видео публичным…")
     yt_ops.set_privacy(vid, "public")
 
-    if os.path.exists(SRT):
+    # Субтитры-файл грузим ТОЛЬКО если он сделан именно для этого видео
+    # (тайминги должны совпадать; после вырезки пауз длительность меняется).
+    subs_for_path = os.path.join(REVIEW, "subs_for.txt")
+    subs_for = open(subs_for_path, encoding="utf-8").read().strip() if os.path.exists(subs_for_path) else ""
+    if os.path.exists(SRT) and subs_for == vid:
         print("08: добавляю субтитры…")
         try:
             yt_ops.insert_caption(vid, SRT, language="ru")
         except Exception as e:
             tg.send_message(f"Субтитры не загрузились: {e}. Видео опубликовано, добавлю субтитры отдельно.")
+    else:
+        print(f"08: пропускаю .srt-субтитры (файл не для этого видео: subs_for='{subs_for}', vid='{vid}'). "
+              "В самом видео субтитры уже вшиты; отдельные добавлю на следующей чистой обработке.")
 
     thumb = os.path.join(REVIEW, f"thumb{chosen}.jpg")
     if os.path.exists(thumb):
