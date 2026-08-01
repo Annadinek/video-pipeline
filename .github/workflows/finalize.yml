@@ -1,0 +1,29 @@
+# finalize.yml — присылает тексты под видео в бот и ставит обложку+описание на видео.
+name: finalize
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: finalize
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          python3 -m pip install --quiet Pillow requests \
+            google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+      - name: Тексты в бот + обложка/описание на видео
+        run: |
+          python3 scripts/make_thumbs.py
+          python3 scripts/finalize.py
