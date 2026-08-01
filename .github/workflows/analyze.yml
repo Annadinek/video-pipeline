@@ -1,0 +1,71 @@
+# analyze.yml — скачивает ЭТАЛОННОЕ видео (обработанное Анной вручную), снимает
+# технические данные и раскладывает по кадрам, чтобы Клод рассмотрел субтитры,
+# качество картинки и обработку и запомнил как образец. Запуск только вручную.
+name: analyze
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "ID эталонного видео"
+        required: true
+        default: "CuAcjA0lWr4"
+
+concurrency:
+  group: analyze
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установка инструментов
+        run: bash scripts/setup.sh
+      - name: Скачать эталон и разложить на кадры
+        run: |
+          set -e
+          VID="${{ github.event.inputs.video_id }}"
+          mkdir -p work reference
+          rm -f reference/*.jpg
+          COOK=""; [ -f work/cookies.txt ] && COOK="--cookies work/cookies.txt"
+          yt-dlp -f "bv*+ba/b" --merge-output-format mp4 --remote-components ejs:github \
+            --retries 5 --fragment-retries 5 $COOK -o work/ref.%(ext)s "https://youtu.be/$VID"
+          ls -lh work/ref.mp4
+          {
+            echo "=== ВИДЕО ==="
+            ffprobe -v error -select_streams v:0 \
+              -show_entries stream=width,height,r_frame_rate,codec_name,bit_rate \
+              -of default=nw=1 work/ref.mp4
+            echo "=== ФОРМАТ ==="
+            ffprobe -v error -show_entries format=duration,bit_rate,size \
+              -of default=nw=1 work/ref.mp4
+            echo "=== ЗВУК ==="
+            ffprobe -v error -select_streams a:0 \
+              -show_entries stream=codec_name,channels,sample_rate,bit_rate \
+              -of default=nw=1 work/ref.mp4
+          } | tee reference/info.txt
+          DUR=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 work/ref.mp4 | cut -d. -f1)
+          echo "Длительность (сек): $DUR" | tee -a reference/info.txt
+          # 10 кадров равномерно по длине — поймаем субтитры и разные планы.
+          for i in $(seq 1 10); do
+            T=$(( DUR * i / 11 ))
+            ffmpeg -y -ss "$T" -i work/ref.mp4 -frames:v 1 -q:v 3 \
+              "reference/frame$(printf %02d "$i")_t${T}s.jpg" 2>/dev/null
+          done
+          ls -lh reference/
+      - name: Сохранить кадры в репозиторий
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add reference 2>/dev/null || true
+          git commit -m "analyze: кадры и данные эталонного видео" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && { echo "push ок"; break; } || { echo "повтор $i"; sleep $((i*3)); }
+          done
