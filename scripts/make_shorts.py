@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-# make_shorts.py — ШАГ 7: нарезка вертикальных роликов 9:16 для Instagram/Shorts.
-# Из исходного видео (work/00_raw.mp4) и расшифровки (work/transcript.json):
-#   1) выбираем 5–6 законченных кусков по 32–75 c с сильным началом;
-#   2) режем, кадрируем в вертикаль 9:16 с лицом по центру, масштаб 1080x1920;
-#   3) вшиваем субтитры в твоём стиле — белые с ЗЕЛЁНОЙ подсветкой слова (караоке);
-#   4) сверху первые 2.5 c — крупный крючок-фраза;
-#   5) присылаем ролики Анне в Telegram (Круг 2 — проверка).
+# make_shorts.py — ШАГ 7: нарезка вертикальных роликов 9:16 из ТОГО ЖЕ видео,
+# что и длинное (CuAcjA0lWr4). Кадр НЕ растягиваем: вписываем целиком, фон —
+# мягкое размытие того же кадра. Субтитры у Анны уже вшиты в исходник — свои НЕ
+# добавляем, только крючок-фразу сверху первые 2.5 c.
 #
-# Кадрирование: лицо в кадрах примерно по центру-справа. Берём вертикальную
-# колонку, центрированную по доле FACE_FX. (Слежение MediaPipe добавим позже,
-# если понадобится — здесь фикс-центр, надёжно и без тяжёлых зависимостей.)
+# Работает так:
+#   1) из расшифровки выбираем 5–6 законченных кусков 32–75 c с сильным началом;
+#   2) режем и собираем вертикаль 1080x1920 (вписанный кадр + размытый фон);
+#   3) сверху крючок; 4) сохраняем ролик и кадр-превью.
+# Отправка в бот — только если SEND=1. Иначе просто собираем и коммитим превью,
+# чтобы Клод посмотрел глазами ПЕРЕД отправкой.
 
 import json
 import os
@@ -23,19 +23,11 @@ WORK = config.WORK_DIR
 RAW = os.path.join(WORK, "00_raw.mp4")
 TRANSCRIPT = os.path.join(WORK, "transcript.json")
 OUT_DIR = "shorts"
+PREVIEW_DIR = "shorts_preview"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-FACE_FX = float(os.environ.get("FACE_FX", "0.56"))   # доля ширины кадра — центр лица
 N_CLIPS = int(os.environ.get("N_CLIPS", "5"))
+SEND = os.environ.get("SEND", "0") == "1"
 JUNK = ("ну ", "вот ", "значит", "это самое", "как бы", "и вот", "а вот", "эээ", "ммм")
-
-
-def _dims(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path],
-        capture_output=True, text=True, check=True).stdout.strip()
-    w, h = out.split("x")
-    return int(w), int(h)
 
 
 def load_segments():
@@ -44,16 +36,14 @@ def load_segments():
 
 
 def pick_clips(segments, n=N_CLIPS, tmin=32, tmax=75):
-    clips = []
-    i, N = 0, len(segments)
+    clips, i, N = [], 0, len(segments)
     while i < N and len(clips) < n:
         t0 = segments[i]["start"]
         low = segments[i]["text"].strip().lower()
         if any(low.startswith(j.strip()) for j in JUNK):
             i += 1
             continue
-        j = i
-        end = segments[i]["end"]
+        j, end = i, segments[i]["end"]
         while j + 1 < N and (segments[j]["end"] - t0) < tmin:
             j += 1
             end = segments[j]["end"]
@@ -61,8 +51,7 @@ def pick_clips(segments, n=N_CLIPS, tmin=32, tmax=75):
                and not segments[j]["text"].strip().endswith((".", "!", "?"))):
             j += 1
             end = segments[j]["end"]
-        dur = end - t0
-        if tmin - 4 <= dur <= tmax:
+        if tmin - 4 <= end - t0 <= tmax:
             clips.append((t0, end, i, j))
             i = j + 2
         else:
@@ -70,30 +59,9 @@ def pick_clips(segments, n=N_CLIPS, tmin=32, tmax=75):
     return clips
 
 
-def clip_words(segments, i, j, t0, end):
-    words = []
-    for seg in segments[i:j + 1]:
-        for w in seg.get("words", []):
-            s, e = float(w["start"]), float(w["end"])
-            t = (w.get("word") or "").strip()
-            if t and s >= t0 - 0.2 and e <= end + 0.2:
-                words.append({"t": t, "s": max(0.0, s - t0), "e": max(0.0, e - t0)})
-    return words
-
-
 def hook_text(segments, i):
     t = re.sub(r"\s+", " ", segments[i]["text"]).strip()
-    words = t.split()
-    h = " ".join(words[:4]).rstrip(".,!?;:—")
-    return h.upper()
-
-
-def _ts(sec):
-    cs = int(round(sec * 100))
-    h, cs = divmod(cs, 360000)
-    m, cs = divmod(cs, 6000)
-    s, cs = divmod(cs, 100)
-    return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
+    return " ".join(t.split()[:4]).rstrip(".,!?;:—").upper()
 
 
 ASS_HEAD = """[Script Info]
@@ -105,78 +73,77 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Sub,DejaVu Sans,74,&H0000FF00,&H00FFFFFF,&H00202020,&H00000000,-1,0,0,0,100,100,0,0,1,4,1,2,60,60,300,1
-Style: Hook,DejaVu Sans,86,&H0000F0FF,&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,8,60,60,220,1
+Style: Hook,DejaVu Sans,80,&H0000F0FF,&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,8,50,50,180,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def build_ass(words, hook, out_ass):
-    ev = []
-    # Крючок сверху первые 2.5 c.
-    ev.append(f"Dialogue: 0,{_ts(0)},{_ts(2.5)},Hook,,0,0,0,,{hook}")
-    # Субтитры караоке по 3 слова.
-    per = 3
-    for k in range(0, len(words), per):
-        grp = words[k:k + per]
-        start, end = grp[0]["s"], grp[-1]["e"]
-        parts = []
-        for m, w in enumerate(grp):
-            dur = (grp[m + 1]["s"] - w["s"]) if m < len(grp) - 1 else (w["e"] - w["s"])
-            parts.append("{\\k%d}%s " % (max(1, int(round(dur * 100))), w["t"]))
-        ev.append(f"Dialogue: 0,{_ts(start)},{_ts(end)},Sub,,0,0,0,,{''.join(parts).strip()}")
+def hook_ass(hook, out_ass):
     with open(out_ass, "w", encoding="utf-8") as f:
-        f.write(ASS_HEAD + "\n".join(ev) + "\n")
+        f.write(ASS_HEAD + f"Dialogue: 0,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{hook}\n")
 
 
-def cut_clip(idx, t0, end, ass, w, h):
-    crop_w = int(round(h * 9 / 16))
-    if crop_w > w:
-        crop_w = w
-    x = int(round(FACE_FX * w - crop_w / 2))
-    x = max(0, min(x, w - crop_w))
+def cut_clip(idx, t0, end, ass):
     out = os.path.join(OUT_DIR, f"short_{idx}.mp4")
-    vf = f"crop={crop_w}:{h}:{x}:0,scale=1080:1920,subtitles={ass}"
+    fc = ("[0:v]split[bg][fg];"
+          "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
+          "crop=1080:1920,boxblur=40:1[bgb];"
+          "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgs];"
+          "[bgb][fgs]overlay=(W-w)/2:(H-h)/2[vv];"
+          f"[vv]subtitles={ass}[v]")
     subprocess.run(
         ["ffmpeg", "-y", "-ss", f"{t0:.3f}", "-to", f"{end:.3f}", "-i", RAW,
-         "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", out],
-        check=True)
+         "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-b:a", "128k", out], check=True)
+    # Кадр-превью для проверки глазами.
+    prev = os.path.join(PREVIEW_DIR, f"short_{idx}.jpg")
+    subprocess.run(["ffmpeg", "-y", "-ss", "1.5", "-i", out, "-frames:v", "1",
+                    "-q:v", "3", prev], check=True, capture_output=True)
     return out
 
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(PREVIEW_DIR, exist_ok=True)
+    for f in os.listdir(PREVIEW_DIR):
+        os.remove(os.path.join(PREVIEW_DIR, f))
     segments = load_segments()
-    w, h = _dims(RAW)
     clips = pick_clips(segments)
     if not clips:
-        tg.send_message("Нарезка: не удалось выбрать куски из расшифровки.")
+        print("нет кусков")
         return
-    print(f"Выбрано кусков: {len(clips)} (видео {w}x{h})")
-    tg.send_message(f"Нарезка готова — {len(clips)} вертикальных ролика. "
-                    "Под каждым: первая фраза и крючок. Скажи по каждому «ок» / «убрать» / «исправить».")
+    print(f"Выбрано кусков: {len(clips)}")
+    made = []
     for n, (t0, end, i, j) in enumerate(clips, 1):
-        words = clip_words(segments, i, j, t0, end)
         hook = hook_text(segments, i)
         ass = os.path.join(OUT_DIR, f"clip_{n}.ass")
-        build_ass(words, hook, ass)
+        hook_ass(hook, ass)
         try:
-            out = cut_clip(n, t0, end, ass, w, h)
+            out = cut_clip(n, t0, end, ass)
         except subprocess.CalledProcessError as e:
             print(f"ролик {n}: ошибка ffmpeg ({e})")
             continue
-        size = os.path.getsize(out) / 1e6
         first = re.sub(r"\s+", " ", segments[i]["text"]).strip()[:80]
-        cap = f"Ролик {n} • {int(end - t0)} c\nКрючок: {hook}\nНачало: {first}"
+        made.append((n, out, int(end - t0), hook, first))
+        print(f"ролик {n}: {out} ({os.path.getsize(out)/1e6:.1f} МБ) крючок={hook}")
+
+    if not SEND:
+        print(f"SEND=0 — собрано {len(made)} роликов, превью в {PREVIEW_DIR}/. Отправка отдельным запуском.")
+        return
+
+    tg.send_message(f"Нарезка по видео «Что такое свобода» — {len(made)} вертикальных ролика. "
+                    "По каждому скажи «ок / убрать / исправить».")
+    for n, out, dur, hook, first in made:
+        size = os.path.getsize(out) / 1e6
+        cap = f"Ролик {n} • {dur} c\nКрючок: {hook}\nНачало: {first}"
         if size <= 49:
             tg.send_video(out, caption=cap)
         else:
-            tg.send_message(cap + f"\n(файл {size:.0f} МБ — великоват для бота, лежит в Releases позже)")
-        print(f"ролик {n}: {out} ({size:.1f} МБ)")
-    print("make_shorts: готово")
+            tg.send_message(cap + f"\n(файл {size:.0f} МБ — великоват, ужму отдельно)")
+    print("make_shorts: отправлено")
 
 
 if __name__ == "__main__":

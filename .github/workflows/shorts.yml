@@ -1,14 +1,19 @@
-# shorts.yml — нарезка вертикальных роликов 9:16 для Instagram/Shorts и отправка
-# их Анне в Telegram (Круг 2). Запуск вручную.
+# shorts.yml — нарезка вертикальных роликов 9:16 из ТОГО ЖЕ видео (CuAcjA0lWr4).
+# По умолчанию только собирает ролики и коммитит кадры-превью (send=false), чтобы
+# Клод посмотрел глазами. При send=true — отправляет ролики Анне в Telegram.
 name: shorts
 
 on:
   workflow_dispatch:
     inputs:
       video_id:
-        description: "ID исходного видео (пусто = самое старое из «Клауд сырое»)"
+        description: "ID видео для нарезки"
+        required: true
+        default: "CuAcjA0lWr4"
+      send:
+        description: "Отправлять ролики в Telegram? (сначала лучше false — проверить превью)"
         required: false
-        default: ""
+        default: "false"
 
 concurrency:
   group: shorts
@@ -31,13 +36,24 @@ jobs:
       - uses: actions/checkout@v4
       - name: Установка инструментов
         run: bash scripts/setup.sh
-      - name: 1) Скачивание исходника
+      - name: 1) Скачивание нужного видео
         run: |
           set -euo pipefail
-          VID="${{ github.event.inputs.video_id }}"
-          python3 scripts/01_download.py "$VID"
+          python3 scripts/01_download.py "${{ github.event.inputs.video_id }}"
           ls -lh work/00_raw.mp4
-      - name: 2) Расшифровка
+      - name: 2) Расшифровка (для выбора кусков и крючков)
         run: python3 scripts/03_transcribe.py
-      - name: 3) Нарезка вертикальных роликов и отправка в бот
+      - name: 3) Нарезка вертикальных роликов
+        env:
+          SEND: ${{ github.event.inputs.send == 'true' && '1' || '0' }}
         run: python3 scripts/make_shorts.py
+      - name: Сохранить кадры-превью
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add shorts_preview 2>/dev/null || true
+          git commit -m "shorts: кадры-превью роликов" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+          done
