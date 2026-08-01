@@ -35,33 +35,70 @@ def load_segments():
         return json.load(f).get("segments", [])
 
 
-def pick_clips(segments, n=N_CLIPS, tmin=32, tmax=75):
-    clips, i, N = [], 0, len(segments)
-    while i < N and len(clips) < n:
-        t0 = segments[i]["start"]
-        low = segments[i]["text"].strip().lower()
-        if any(low.startswith(j.strip()) for j in JUNK):
-            i += 1
+END = (".", "!", "?", "…")
+
+
+def build_sentences(segments):
+    """Склеиваем сегменты в целые предложения (до знака конца фразы).
+    Нарезаем только по границам предложений — тогда ролик не обрывается на слове."""
+    sents, cur = [], []
+    for s in segments:
+        cur.append(s)
+        if s["text"].strip().endswith(END):
+            sents.append(cur)
+            cur = []
+    if cur:
+        sents.append(cur)
+    out = []
+    for grp in sents:
+        text = " ".join(x["text"].strip() for x in grp).strip()
+        out.append({"start": grp[0]["start"], "end": grp[-1]["end"], "text": text})
+    return out
+
+
+def pick_clips(segments, n=N_CLIPS, tmin=22, tmax=75):
+    """Кусок = одно или несколько ПОДРЯД идущих целых предложений, 22–75 c.
+    Начинается с начала предложения, заканчивается концом предложения."""
+    S = build_sentences(segments)
+    clips, k, N = [], 0, len(S)
+    while k < N and len(clips) < n:
+        low = S[k]["text"].strip().lower()
+        if len(low) < 12 or any(low.startswith(j.strip()) for j in JUNK):
+            k += 1
             continue
-        j, end = i, segments[i]["end"]
-        while j + 1 < N and (segments[j]["end"] - t0) < tmin:
+        t0, end, j = S[k]["start"], S[k]["end"], k
+        # добираем целыми предложениями, пока кусок короче tmin и влезает в tmax
+        while (end - t0) < tmin and j + 1 < N and (S[j + 1]["end"] - t0) <= tmax:
             j += 1
-            end = segments[j]["end"]
-        while (j + 1 < N and (segments[j + 1]["end"] - t0) <= tmax
-               and not segments[j]["text"].strip().endswith((".", "!", "?"))):
-            j += 1
-            end = segments[j]["end"]
-        if tmin - 4 <= end - t0 <= tmax:
-            clips.append((t0, end, i, j))
-            i = j + 2
+            end = S[j]["end"]
+        dur = end - t0
+        if tmin - 6 <= dur <= tmax:
+            clips.append((t0, end, S[k]["text"]))
+            k = j + 2
         else:
-            i += 1
+            k += 1
     return clips
 
 
-def hook_text(segments, i):
-    t = re.sub(r"\s+", " ", segments[i]["text"]).strip()
-    return " ".join(t.split()[:4]).rstrip(".,!?;:—").upper()
+# Короткие служебные слова, на которые крючок заканчиваться не должен (некрасиво).
+TAIL_STOP = {"в", "во", "и", "а", "но", "на", "по", "о", "об", "что", "как", "с",
+             "со", "к", "от", "до", "у", "за", "из", "не", "ни", "же", "бы", "ли",
+             "то", "это", "я", "ты", "мы", "вы", "он", "она", "они", "мой", "моя"}
+
+
+def hook_text(text):
+    """Крючок — законченная короткая фраза из начала куска: без тире-маркеров
+    реплик (дефис внутри слова сохраняем) и без висящего предлога/союза в конце."""
+    t = " " + text + " "
+    t = re.sub(r"\s[—–-]+\s", " ", t)          # тире-маркеры реплик (в окружении пробелов)
+    t = re.sub(r"\s+", " ", t).strip(" —–-")   # ведущие/замыкающие тире
+    first = re.split(r"[,.!?;:]", t)[0].strip()  # до первой паузы-запятой
+    words = first.split()
+    if not (2 <= len(words) <= 6):
+        words = t.split()[:5]
+    while len(words) > 2 and words[-1].lower().strip(".,!?;:") in TAIL_STOP:
+        words.pop()
+    return " ".join(words).rstrip(".,!?;:—–- ").upper().strip()
 
 
 ASS_HEAD = """[Script Info]
@@ -85,17 +122,19 @@ def hook_ass(hook, out_ass):
         f.write(ASS_HEAD + f"Dialogue: 0,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{hook}\n")
 
 
-# Доля ширины исходника, которую оставляем по центру. Исходник Анны почти
-# квадратный (лицо по центру), а её субтитры вшиты широкой строкой. Если резать
-# в упор 9:16 — субтитр обрежется по краям. Поэтому оставляем центральные 56%
-# ширины (лицо крупное, широкий субтитр целиком помещается), низ/верх добираем
-# мягким размытием того же кадра — полосы маленькие (~12%), не чёрные.
-CROP_FRAC = float(os.environ.get("CROP_FRAC", "0.56"))
+# Кадрируем КАЖДЫЙ кусок к одному портретному размеру 3:4 (как у ролика 1),
+# а НЕ по доле ширины. Видео Анны склеено из кусков разной ширины: при кадрировании
+# по доле широкие куски давали низкую картинку и большие полосы. Приводя каждый
+# кусок к одному аспекту 3:4, получаем одинаково крупное лицо и одинаково маленькие
+# полосы (~12%) во всех роликах — все смотрятся как первый. Субтитры Анны (по центру
+# снизу) при этом помещаются целиком, низ/верх добираем мягким размытием.
+CROP_AR = os.environ.get("CROP_AR", "3/4")  # ширина:высота портретного кадра
 
 
 def cut_clip(idx, t0, end, ass):
     out = os.path.join(OUT_DIR, f"short_{idx}.mp4")
-    cw = f"iw*{CROP_FRAC:.3f}"
+    # min(iw, ih*3/4) — на случай уже-портретного куска не выходим за ширину.
+    cw = f"min(iw\\,ih*{CROP_AR})"
     fc = (f"[0:v]crop={cw}:ih:(iw-{cw})/2:0[c];"
           "[c]split[bg][fg];"
           "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
@@ -129,8 +168,8 @@ def main():
         return
     print(f"Выбрано кусков: {len(clips)}")
     made = []
-    for n, (t0, end, i, j) in enumerate(clips, 1):
-        hook = hook_text(segments, i)
+    for n, (t0, end, text) in enumerate(clips, 1):
+        hook = hook_text(text)
         ass = os.path.join(OUT_DIR, f"clip_{n}.ass")
         hook_ass(hook, ass)
         try:
@@ -138,7 +177,7 @@ def main():
         except subprocess.CalledProcessError as e:
             print(f"ролик {n}: ошибка ffmpeg ({e})")
             continue
-        first = re.sub(r"\s+", " ", segments[i]["text"]).strip()[:80]
+        first = re.sub(r"\s+", " ", text).strip()[:80]
         made.append((n, out, int(end - t0), hook, first))
         print(f"ролик {n}: {out} ({os.path.getsize(out)/1e6:.1f} МБ) крючок={hook}")
 
