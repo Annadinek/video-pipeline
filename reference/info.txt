@@ -1,0 +1,16 @@
+=== ВИДЕО ===
+codec_name=h264
+width=960
+height=720
+r_frame_rate=30/1
+bit_rate=750064
+=== ФОРМАТ ===
+duration=1178.921000
+size=126894042
+bit_rate=861085
+=== ЗВУК ===
+codec_name=opus
+sample_rate=48000
+channels=2
+bit_rate=103841
+Длительность (сек): 1178
