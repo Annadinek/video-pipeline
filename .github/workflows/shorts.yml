@@ -1,0 +1,43 @@
+# shorts.yml — нарезка вертикальных роликов 9:16 для Instagram/Shorts и отправка
+# их Анне в Telegram (Круг 2). Запуск вручную.
+name: shorts
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "ID исходного видео (пусто = самое старое из «Клауд сырое»)"
+        required: false
+        default: ""
+
+concurrency:
+  group: shorts
+  cancel-in-progress: false
+
+jobs:
+  shorts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 200
+    permissions:
+      contents: write
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      WHISPER_MODEL: medium
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установка инструментов
+        run: bash scripts/setup.sh
+      - name: 1) Скачивание исходника
+        run: |
+          set -euo pipefail
+          VID="${{ github.event.inputs.video_id }}"
+          python3 scripts/01_download.py "$VID"
+          ls -lh work/00_raw.mp4
+      - name: 2) Расшифровка
+        run: python3 scripts/03_transcribe.py
+      - name: 3) Нарезка вертикальных роликов и отправка в бот
+        run: python3 scripts/make_shorts.py

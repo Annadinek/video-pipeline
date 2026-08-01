@@ -58,6 +58,24 @@ def send_audio(audio, title="", caption="", chat_id=None):
     return js["result"]
 
 
+def send_video(path, caption="", chat_id=None):
+    """Отправить видео-файл (вертикальный ролик)."""
+    url = API.format(token=_token(), method="sendVideo")
+    with open(path, "rb") as f:
+        r = requests.post(
+            url,
+            data={"chat_id": chat_id or config.TELEGRAM_ADMIN_CHAT, "caption": caption,
+                  "supports_streaming": True},
+            files={"video": f},
+            timeout=300,
+        )
+    r.raise_for_status()
+    js = r.json()
+    if not js.get("ok"):
+        raise RuntimeError(f"Telegram sendVideo: {js}")
+    return js["result"]
+
+
 def get_updates(offset=None, timeout=0):
     """Новые сообщения боту. offset = last_update_id + 1 (чтобы не читать старые)."""
     return _call("getUpdates", offset=offset or 0, timeout=timeout)
