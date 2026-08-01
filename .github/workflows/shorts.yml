@@ -14,6 +14,10 @@ on:
         description: "Отправлять ролики в Telegram? (сначала лучше false — проверить превью)"
         required: false
         default: "false"
+      n_clips:
+        description: "Сколько роликов нарезать/отправить"
+        required: false
+        default: "5"
 
 concurrency:
   group: shorts
@@ -49,6 +53,7 @@ jobs:
       - name: 3) Нарезка вертикальных роликов
         env:
           SEND: ${{ github.event.inputs.send == 'true' && '1' || '0' }}
+          N_CLIPS: ${{ github.event.inputs.n_clips }}
         run: python3 scripts/make_shorts.py
       - name: Сохранить кадры-превью
         if: always()
