@@ -68,12 +68,12 @@ ASS_HEAD = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
 PlayResY: 1920
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Hook,DejaVu Sans,80,&H0000F0FF,&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,8,50,50,180,1
+Style: Hook,DejaVu Sans,60,&H0000F0FF,&H00FFFFFF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,5,2,8,40,40,150,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -85,12 +85,22 @@ def hook_ass(hook, out_ass):
         f.write(ASS_HEAD + f"Dialogue: 0,0:00:00.00,0:00:02.50,Hook,,0,0,0,,{hook}\n")
 
 
+# Доля ширины исходника, которую оставляем по центру. Исходник Анны почти
+# квадратный (лицо по центру), а её субтитры вшиты широкой строкой. Если резать
+# в упор 9:16 — субтитр обрежется по краям. Поэтому оставляем центральные 56%
+# ширины (лицо крупное, широкий субтитр целиком помещается), низ/верх добираем
+# мягким размытием того же кадра — полосы маленькие (~12%), не чёрные.
+CROP_FRAC = float(os.environ.get("CROP_FRAC", "0.56"))
+
+
 def cut_clip(idx, t0, end, ass):
     out = os.path.join(OUT_DIR, f"short_{idx}.mp4")
-    fc = ("[0:v]split[bg][fg];"
+    cw = f"iw*{CROP_FRAC:.3f}"
+    fc = (f"[0:v]crop={cw}:ih:(iw-{cw})/2:0[c];"
+          "[c]split[bg][fg];"
           "[bg]scale=1080:1920:force_original_aspect_ratio=increase,"
-          "crop=1080:1920,boxblur=40:1[bgb];"
-          "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgs];"
+          "crop=1080:1920,boxblur=22:2[bgb];"
+          "[fg]scale=1080:-2[fgs];"
           "[bgb][fgs]overlay=(W-w)/2:(H-h)/2[vv];"
           f"[vv]subtitles={ass}[v]")
     subprocess.run(
@@ -98,10 +108,12 @@ def cut_clip(idx, t0, end, ass):
          "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
          "-c:a", "aac", "-b:a", "128k", out], check=True)
-    # Кадр-превью для проверки глазами.
-    prev = os.path.join(PREVIEW_DIR, f"short_{idx}.jpg")
-    subprocess.run(["ffmpeg", "-y", "-ss", "1.5", "-i", out, "-frames:v", "1",
-                    "-q:v", "3", prev], check=True, capture_output=True)
+    # Два кадра-превью (начало и середина) — проверить глазами, что субтитр Анны
+    # нигде не обрезан и лицо крупное.
+    for tag, ss in (("a", "1.5"), ("b", f"{(end - t0) / 2:.1f}")):
+        prev = os.path.join(PREVIEW_DIR, f"short_{idx}{tag}.jpg")
+        subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", out, "-frames:v", "1",
+                        "-q:v", "3", prev], check=True, capture_output=True)
     return out
 
 

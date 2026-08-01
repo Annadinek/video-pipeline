@@ -54,6 +54,7 @@ jobs:
           git config user.email "bot@users.noreply.github.com"
           git add shorts_preview 2>/dev/null || true
           git commit -m "shorts: кадры-превью роликов" || echo "нечего коммитить"
+          BR="${GITHUB_REF_NAME}"
           for i in 1 2 3 4; do
-            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+            git pull --rebase origin "$BR" && git push origin "HEAD:$BR" && break || sleep $((i*3))
           done
