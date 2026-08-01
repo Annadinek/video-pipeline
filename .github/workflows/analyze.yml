@@ -34,8 +34,10 @@ jobs:
           mkdir -p work reference
           rm -f reference/*.jpg
           COOK=""; [ -f work/cookies.txt ] && COOK="--cookies work/cookies.txt"
-          yt-dlp -f "bv*+ba/b" --merge-output-format mp4 --remote-components ejs:github \
-            --retries 5 --fragment-retries 5 $COOK -o work/ref.%(ext)s "https://youtu.be/$VID"
+          # ВАЖНО: шаблон -o в кавычках, иначе bash спотыкается о скобки в %(ext)s.
+          # 720p достаточно для кадров и обложек, качается быстрее, чем 4K/1080.
+          yt-dlp -f "bv*[height<=720]+ba/b" --merge-output-format mp4 --remote-components ejs:github \
+            --retries 5 --fragment-retries 5 $COOK -o "work/ref.%(ext)s" "https://youtu.be/$VID"
           ls -lh work/ref.mp4
           {
             echo "=== ВИДЕО ==="
@@ -52,9 +54,9 @@ jobs:
           } | tee reference/info.txt
           DUR=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 work/ref.mp4 | cut -d. -f1)
           echo "Длительность (сек): $DUR" | tee -a reference/info.txt
-          # 10 кадров равномерно по длине — поймаем субтитры и разные планы.
-          for i in $(seq 1 10); do
-            T=$(( DUR * i / 11 ))
+          # 16 кадров равномерно по длине — поймаем субтитры, планы и ракурсы лица.
+          for i in $(seq 1 16); do
+            T=$(( DUR * i / 17 ))
             ffmpeg -y -ss "$T" -i work/ref.mp4 -frames:v 1 -q:v 3 \
               "reference/frame$(printf %02d "$i")_t${T}s.jpg" 2>/dev/null
           done
