@@ -31,7 +31,10 @@ jobs:
       YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       YT_COOKIES: ${{ secrets.YT_COOKIES }}
-      WHISPER_MODEL: medium
+      # Для нарезки нужна только грубая разметка кусков и текст крючков — субтитры
+      # у Анны уже вшиты в исходник. Поэтому берём лёгкую модель: расшифровка идёт
+      # в разы быстрее, ожидание короче.
+      WHISPER_MODEL: small
     steps:
       - uses: actions/checkout@v4
       - name: Установка инструментов
