@@ -1,0 +1,43 @@
+# thumbs.yml — собирает 3 обложки из кадров reference/ и отправляет Анне в Telegram.
+# Запуск вручную. Кадры берутся из папки reference/ (закоммичены analyze.yml).
+name: thumbs
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: thumbs
+  cancel-in-progress: false
+
+jobs:
+  thumbs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet Pillow requests
+      - name: Собрать обложки и отправить
+        run: |
+          python3 scripts/make_thumbs.py
+          python3 - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          import tg
+          caps = [
+              "Обложка 1 — «ЧТО ТАКОЕ СВОБОДА»",
+              "Обложка 2 — «ВЫХОД ТИШИНЫ»",
+              "Обложка 3 — «ТЫ — НАБЛЮДАТЕЛЬ»",
+          ]
+          tg.send_message(
+              "3 обложки в твоём стиле: крупный текст заглавными, ключевое слово "
+              "на жёлтой плашке, белое с чёрной обводкой, лицо подсвечено.\n\n"
+              "Скажи номер, который берём, или что поправить — текст, кадр, "
+              "сделать лицо крупнее и т.п."
+          )
+          for i, c in enumerate(caps, 1):
+              tg.send_photo(f"thumbs/thumb{i}.jpg", caption=c)
+          print("Обложки отправлены.")
+          PY
