@@ -1,0 +1,12 @@
+{
+  "enabledPlugins": {
+    "remember@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "notion@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "telegram@claude-plugins-official": true,
+    "atlassian@claude-plugins-official": true,
+    "mongodb@claude-plugins-official": true
+  }
+}
