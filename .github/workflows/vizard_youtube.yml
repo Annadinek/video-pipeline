@@ -1,0 +1,45 @@
+# vizard_youtube.yml — берёт клипы из Vizard и выкладывает их в YouTube Shorts
+# на канал Анны с открытым доступом (public), подписывает и проверяет блокировку.
+name: vizard-youtube
+
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: "Ссылка на видео или ID YouTube"
+        required: true
+        default: "CuAcjA0lWr4"
+      project_id:
+        description: "Готовый проект Vizard (чтобы не платить за новую нарезку). Пусто = новая нарезка"
+        required: false
+        default: ""
+      max_upload:
+        description: "Сколько шортсов выложить (квота ~6/сутки)"
+        required: false
+        default: "6"
+
+concurrency:
+  group: vizard-youtube
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      VIZARD_API_KEY: ${{ secrets.VIZARD_API_KEY }}
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id }}
+      YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          python3 -m pip install --quiet requests \
+            google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+      - name: Выложить клипы в YouTube Shorts
+        run: python3 scripts/vizard_to_youtube.py "${{ github.event.inputs.video }}"
