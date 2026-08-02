@@ -1,0 +1,28 @@
+# yt_hide.yml — скрыть (сделать приватными) указанные видео на YouTube.
+name: yt-hide
+
+on:
+  workflow_dispatch:
+    inputs:
+      ids:
+        description: "ID видео через запятую (сделать приватными)"
+        required: true
+
+jobs:
+  hide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      HIDE_IDS: ${{ github.event.inputs.ids }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          python3 -m pip install --quiet requests \
+            google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+      - name: Скрыть ролики
+        run: python3 scripts/yt_hide.py
