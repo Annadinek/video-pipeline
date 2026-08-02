@@ -87,9 +87,10 @@ def pick_clips(segments, n=N_CLIPS, tmin=22, tmax=75):
     return clips
 
 
-def speech_intervals(words, t0, end, pad=0.08, merge_gap=0.28):
-    """Из таймингов слов строим отрезки речи: паузы длиннее ~0.4 c вырезаются,
-    тишина в начале/конце тоже. Короткие естественные паузы остаются."""
+def speech_intervals(words, t0, end, pad=0.12, merge_gap=0.55):
+    """Из таймингов слов строим отрезки речи: вырезаем только заметные паузы
+    (длиннее ~0.8 c) и тишину в начале/конце. Короткие естественные паузы между
+    словами оставляем, чтобы речь не стала рубленой и склейки не дёргались."""
     ws = sorted((w for w in words
                  if w.get("start") is not None and t0 - 0.1 <= w["start"] <= end + 0.1),
                 key=lambda w: w["start"])
