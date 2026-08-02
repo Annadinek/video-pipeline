@@ -63,5 +63,25 @@
     "datadog@claude-plugins-official": true,
     "sourcegraph@claude-plugins-official": true,
     "greptile@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "marketingskills": {
+      "source": {
+        "source": "github",
+        "repo": "coreyhaines31/marketingskills"
+      }
+    },
+    "stop-slop": {
+      "source": {
+        "source": "github",
+        "repo": "hardikpandya/stop-slop"
+      }
+    },
+    "context-engineering-kit": {
+      "source": {
+        "source": "github",
+        "repo": "NeoLabHQ/context-engineering-kit"
+      }
+    }
   }
 }
