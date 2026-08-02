@@ -1,0 +1,37 @@
+# vizard.yml — нарезка видео через Vizard.ai API (заменяет ffmpeg-нарезку).
+# Ключ Vizard — секрет VIZARDAI_API_KEY. Отдаём ссылку на видео, забираем клипы,
+# шлём Анне в Telegram-бот.
+name: vizard
+
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: "Ссылка на видео или ID YouTube"
+        required: true
+        default: "CuAcjA0lWr4"
+      lang:
+        description: "Язык речи (ru / auto)"
+        required: false
+        default: "ru"
+
+concurrency:
+  group: vizard
+  cancel-in-progress: false
+
+jobs:
+  vizard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Пробрасываем оба возможных имени секрета — скрипт возьмёт непустой.
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      VIZARD_API_KEY: ${{ secrets.VIZARD_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      VIZARD_LANG: ${{ github.event.inputs.lang }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Нарезка через Vizard
+        run: python3 scripts/vizard_clip.py "${{ github.event.inputs.video }}"
