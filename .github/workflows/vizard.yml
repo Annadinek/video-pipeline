@@ -1,6 +1,7 @@
-# vizard.yml — нарезка видео через Vizard.ai API (заменяет ffmpeg-нарезку).
-# Ключ Vizard — секрет VIZARDAI_API_KEY. Отдаём ссылку на видео, забираем клипы,
-# шлём Анне в Telegram-бот.
+# vizard.yml — нарезка видео через Vizard.ai API.
+# У видео Анны субтитры уже вшиты, поэтому по умолчанию Vizard свои НЕ добавляет
+# (subtitle_switch=0). Режим preview_only=1 — только вынуть кадры на проверку
+# глазами, в бот ничего не слать.
 name: vizard
 
 on:
@@ -14,6 +15,14 @@ on:
         description: "Язык речи (ru / auto)"
         required: false
         default: "ru"
+      subtitle_switch:
+        description: "Субтитры Vizard: 0 = не добавлять (у видео свои), 1 = добавлять"
+        required: false
+        default: "0"
+      preview_only:
+        description: "1 = только кадры на проверку (в бот не слать), 0 = слать в бот"
+        required: false
+        default: "0"
 
 concurrency:
   group: vizard
@@ -23,15 +32,31 @@ jobs:
   vizard:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
     env:
-      # Пробрасываем оба возможных имени секрета — скрипт возьмёт непустой.
       VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
       VIZARD_API_KEY: ${{ secrets.VIZARD_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       VIZARD_LANG: ${{ github.event.inputs.lang }}
+      SUBTITLE_SWITCH: ${{ github.event.inputs.subtitle_switch || '0' }}
+      HEADLINE_SWITCH: "0"
+      PREVIEW_ONLY: ${{ github.event.inputs.preview_only || '0' }}
     steps:
       - uses: actions/checkout@v4
-      - name: Библиотеки
-        run: python3 -m pip install --quiet requests
+      - name: Инструменты
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet requests
       - name: Нарезка через Vizard
         run: python3 scripts/vizard_clip.py "${{ github.event.inputs.video }}"
+      - name: Сохранить кадры-проверки
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add shorts_preview 2>/dev/null || true
+          git commit -m "vizard: кадры-проверки (двойные субтитры?)" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+          done

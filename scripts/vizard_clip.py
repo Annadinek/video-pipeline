@@ -13,6 +13,7 @@
 #      оценка виральности; если файл больше лимита бота — шлём прямой ссылкой.
 
 import os
+import subprocess
 import sys
 import time
 
@@ -46,6 +47,12 @@ def video_type_for(url):
     return 1, ext
 
 
+# Субтитры/хедлайны Vizard. У видео Анны субтитры УЖЕ вшиты — поэтому по умолчанию
+# отключаем добавление субтитров Vizard (иначе получаются двойные). 1=вкл, 0=выкл.
+SUBTITLE_SWITCH = int(os.environ.get("SUBTITLE_SWITCH", "0"))
+HEADLINE_SWITCH = int(os.environ.get("HEADLINE_SWITCH", "0"))
+
+
 def create_project(api_key, video_url):
     vtype, ext = video_type_for(video_url)
     body = {
@@ -53,6 +60,8 @@ def create_project(api_key, video_url):
         "videoType": vtype,
         "lang": LANG,
         "preferLength": PREFER_LENGTH,
+        "subtitleSwitch": SUBTITLE_SWITCH,
+        "headlineSwitch": HEADLINE_SWITCH,
     }
     if vtype == 1:
         body["ext"] = ext
@@ -91,22 +100,8 @@ def download(url, path):
     return path
 
 
-def get_api_key():
-    """Ключ Vizard. В CLAUDE.md он назван VIZARD_API_KEY, в скилле и в секретах —
-    VIZARDAI_API_KEY. Берём любой из них, какой реально задан, чтобы не зависеть
-    от расхождения в названии."""
-    for name in ("VIZARDAI_API_KEY", "VIZARD_API_KEY"):
-        val = os.environ.get(name)
-        if val and val.strip():
-            return val.strip()
-    raise SystemExit(
-        "Нет ключа Vizard. Добавь секрет VIZARDAI_API_KEY (или VIZARD_API_KEY) "
-        "в GitHub Secrets (Settings -> Secrets and variables -> Actions)."
-    )
-
-
 def main():
-    api_key = get_api_key()
+    api_key = config.require_env("VIZARDAI_API_KEY")
     if len(sys.argv) > 1 and sys.argv[1].strip():
         arg = sys.argv[1].strip()
     else:
@@ -128,8 +123,25 @@ def main():
             return 0.0
     clips.sort(key=score, reverse=True)
     print(f"Vizard: готово клипов — {len(clips)}")
-
     os.makedirs("shorts", exist_ok=True)
+
+    # Режим проверки: скачать пару клипов и вынуть кадры (начало+середина) в
+    # shorts_preview/, чтобы Клод посмотрел ГЛАЗАМИ, нет ли двойных субтитров.
+    # В бот ничего не шлём.
+    if os.environ.get("PREVIEW_ONLY", "0") == "1":
+        os.makedirs("shorts_preview", exist_ok=True)
+        n = min(int(os.environ.get("PREVIEW_N", "2")), len(clips))
+        for i, c in enumerate(clips[:n], 1):
+            p = download(c.get("videoUrl"), os.path.join("shorts", f"chk_{i}.mp4"))
+            dur = (c.get("videoMsDuration") or 0) / 1000
+            for tag, ss in (("a", "1.0"), ("b", f"{max(dur / 2, 1.5):.1f}")):
+                subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", p, "-frames:v", "1",
+                                "-q:v", "3", os.path.join("shorts_preview", f"chk_{i}{tag}.jpg")],
+                               check=True, capture_output=True)
+            print(f"проверка клип {i}: {c.get('title')}")
+        print("PREVIEW_ONLY: кадры в shorts_preview/, в бот не слал")
+        return
+
     tg.send_message(f"Vizard нарезал {len(clips)} клипов по видео. Показываю лучшие "
                     f"{min(MAX_SEND, len(clips))} (по оценке виральности). "
                     "По каждому: «ок / убрать / исправить».")
