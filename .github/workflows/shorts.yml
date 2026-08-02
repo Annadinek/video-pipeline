@@ -14,6 +14,10 @@ on:
         description: "Отправлять ролики в Telegram? (сначала лучше false — проверить превью)"
         required: false
         default: "false"
+      n_clips:
+        description: "Сколько роликов нарезать/отправить"
+        required: false
+        default: "5"
 
 concurrency:
   group: shorts
@@ -31,7 +35,10 @@ jobs:
       YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       YT_COOKIES: ${{ secrets.YT_COOKIES }}
-      WHISPER_MODEL: medium
+      # Для нарезки нужна только грубая разметка кусков и текст крючков — субтитры
+      # у Анны уже вшиты в исходник. Поэтому берём лёгкую модель: расшифровка идёт
+      # в разы быстрее, ожидание короче.
+      WHISPER_MODEL: small
     steps:
       - uses: actions/checkout@v4
       - name: Установка инструментов
@@ -46,6 +53,7 @@ jobs:
       - name: 3) Нарезка вертикальных роликов
         env:
           SEND: ${{ github.event.inputs.send == 'true' && '1' || '0' }}
+          N_CLIPS: ${{ github.event.inputs.n_clips }}
         run: python3 scripts/make_shorts.py
       - name: Сохранить кадры-превью
         if: always()
@@ -54,6 +62,7 @@ jobs:
           git config user.email "bot@users.noreply.github.com"
           git add shorts_preview 2>/dev/null || true
           git commit -m "shorts: кадры-превью роликов" || echo "нечего коммитить"
+          BR="${GITHUB_REF_NAME}"
           for i in 1 2 3 4; do
-            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+            git pull --rebase origin "$BR" && git push origin "HEAD:$BR" && break || sleep $((i*3))
           done
