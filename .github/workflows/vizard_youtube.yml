@@ -1,8 +1,12 @@
-# vizard_youtube.yml — берёт клипы из Vizard и выкладывает их в YouTube Shorts
-# на канал Анны с открытым доступом (public), подписывает и проверяет блокировку.
+# vizard_youtube.yml — выкладывает клипы Vizard в YouTube Shorts (public).
+# YouTube даёт ~6 загрузок в сутки, поэтому все клипы выходят партиями:
+# раз в день по расписанию следующая партия, пока не выложены ВСЕ (учёт в
+# shorts_published.json). Можно и вручную через кнопку.
 name: vizard-youtube
 
 on:
+  schedule:
+    - cron: "0 7 * * *"   # каждый день 07:00 UTC = 10:00 Стамбул — следующая партия
   workflow_dispatch:
     inputs:
       video:
@@ -14,9 +18,13 @@ on:
         required: false
         default: ""
       max_upload:
-        description: "Сколько шортсов выложить (квота ~6/сутки)"
+        description: "Сколько шортсов выложить за раз (лимит YouTube ~6/сутки)"
         required: false
         default: "6"
+      init_mark:
+        description: "Только отметить N клипов как уже выложенные (учёт), без загрузки: 1/0"
+        required: false
+        default: "0"
 
 concurrency:
   group: vizard-youtube
@@ -26,6 +34,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
       VIZARD_API_KEY: ${{ secrets.VIZARD_API_KEY }}
@@ -33,8 +43,11 @@ jobs:
       YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
       YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id }}
-      YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload }}
+      # По расписанию inputs нет — берём текущую задачу довыкладывания по умолчанию.
+      VIDEO: ${{ github.event.inputs.video || 'CuAcjA0lWr4' }}
+      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id || '33099287' }}
+      YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload || '6' }}
+      INIT_MARK: ${{ github.event.inputs.init_mark || '0' }}
     steps:
       - uses: actions/checkout@v4
       - name: Библиотеки
@@ -42,4 +55,14 @@ jobs:
           python3 -m pip install --quiet requests \
             google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
       - name: Выложить клипы в YouTube Shorts
-        run: python3 scripts/vizard_to_youtube.py "${{ github.event.inputs.video }}"
+        run: python3 scripts/vizard_to_youtube.py "$VIDEO"
+      - name: Сохранить учёт выложенного
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add shorts_published.json 2>/dev/null || true
+          git commit -m "shorts: учёт выложенных в YouTube" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+          done
