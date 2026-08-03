@@ -1,0 +1,25 @@
+# notify.yml — отправить текстовый файл из репозитория в Telegram-бот Анны.
+# Нужно, чтобы слать в бот тексты (новые темы, заметки), а не в чат.
+name: notify
+
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "Путь к файлу с текстом (относительно корня репозитория)"
+        required: true
+        default: "3-Тексты-и-сценарии/новые-темы.md"
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      NOTIFY_FILE: ${{ github.event.inputs.file }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Отправить текст в бот
+        run: python3 scripts/notify.py "$NOTIFY_FILE"
