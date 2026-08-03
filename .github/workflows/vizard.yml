@@ -23,6 +23,14 @@ on:
         description: "1 = только кадры на проверку (в бот не слать), 0 = слать в бот"
         required: false
         default: "0"
+      project_id:
+        description: "Готовый проект Vizard (не резать заново, забрать клипы). Пусто = новая нарезка"
+        required: false
+        default: ""
+      max_send:
+        description: "Сколько клипов слать в бот на проверку"
+        required: false
+        default: "6"
 
 concurrency:
   group: vizard
@@ -42,6 +50,8 @@ jobs:
       SUBTITLE_SWITCH: ${{ github.event.inputs.subtitle_switch || '0' }}
       HEADLINE_SWITCH: "0"
       PREVIEW_ONLY: ${{ github.event.inputs.preview_only || '0' }}
+      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id || '' }}
+      VIZARD_MAX_SEND: ${{ github.event.inputs.max_send || '6' }}
     steps:
       - uses: actions/checkout@v4
       - name: Инструменты
@@ -49,7 +59,9 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python3 -m pip install --quiet requests
       - name: Нарезка через Vizard
-        run: python3 scripts/vizard_clip.py "${{ github.event.inputs.video }}"
+        env:
+          VIDEO_URL: ${{ github.event.inputs.video }}
+        run: python3 scripts/vizard_clip.py
       - name: Сохранить кадры-проверки
         if: always()
         run: |
