@@ -102,18 +102,24 @@ def download(url, path):
 
 def main():
     api_key = config.require_env("VIZARDAI_API_KEY")
-    if len(sys.argv) > 1 and sys.argv[1].strip():
-        arg = sys.argv[1].strip()
+    # Если задан VIZARD_PROJECT_ID — берём УЖЕ готовый проект Vizard и не режем
+    # заново (не платим за новую нарезку). Иначе создаём новый проект по ссылке.
+    existing = os.environ.get("VIZARD_PROJECT_ID", "").strip()
+    if existing:
+        project_id = existing
+        print(f"Vizard: беру готовый проект {project_id}, забираю клипы...")
     else:
-        arg = os.environ.get("VIDEO_URL", "").strip()
-    if not arg:
-        raise SystemExit("Не задана ссылка на видео (аргумент или VIDEO_URL).")
-    # Если передан только ID YouTube — собираем полную ссылку.
-    video_url = arg if "://" in arg else f"https://www.youtube.com/watch?v={arg}"
-
-    print(f"Vizard: отправляю на нарезку {video_url}")
-    project_id = create_project(api_key, video_url)
-    print(f"Vizard: проект {project_id}, жду клипы (опрос каждые {POLL_EVERY} c)...")
+        if len(sys.argv) > 1 and sys.argv[1].strip():
+            arg = sys.argv[1].strip()
+        else:
+            arg = os.environ.get("VIDEO_URL", "").strip()
+        if not arg:
+            raise SystemExit("Не задана ссылка на видео (аргумент или VIDEO_URL).")
+        # Если передан только ID YouTube — собираем полную ссылку.
+        video_url = arg if "://" in arg else f"https://www.youtube.com/watch?v={arg}"
+        print(f"Vizard: отправляю на нарезку {video_url}")
+        project_id = create_project(api_key, video_url)
+        print(f"Vizard: проект {project_id}, жду клипы (опрос каждые {POLL_EVERY} c)...")
     clips = wait_for_clips(api_key, project_id)
     # Сортируем по виральности (Vizard уже сортирует, но подстрахуемся).
     def score(c):
