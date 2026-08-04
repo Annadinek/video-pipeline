@@ -14,14 +14,18 @@ on:
         description: "Номера клипов через запятую (как в списке в боте)"
         required: true
         default: "1"
-      keep_top:
-        description: "Какую долю кадра сверху оставить (низ со старыми субтитрами отрезаем)"
+      blur_band:
+        description: "Доля кадра снизу для размытия старых субтитров (0.18 = 18%)"
         required: false
-        default: "0.80"
+        default: "0.18"
       font_size:
         description: "Размер новых субтитров (маленькие = 44)"
         required: false
         default: "44"
+      preview_only:
+        description: "1 = вынуть кадры на проверку (в бот не слать), 0 = слать в бот"
+        required: false
+        default: "0"
 
 concurrency:
   group: resub
@@ -31,19 +35,32 @@ jobs:
   resub:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: write
     env:
       VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
       VIZARD_API_KEY: ${{ secrets.VIZARD_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id }}
       INDICES: ${{ github.event.inputs.indices }}
-      KEEP_TOP: ${{ github.event.inputs.keep_top || '0.80' }}
+      BLUR_BAND: ${{ github.event.inputs.blur_band || '0.18' }}
       FONT_SIZE: ${{ github.event.inputs.font_size || '44' }}
+      PREVIEW_ONLY: ${{ github.event.inputs.preview_only || '0' }}
     steps:
       - uses: actions/checkout@v4
       - name: Инструменты
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
           python3 -m pip install --quiet requests faster-whisper
-      - name: Заменить субтитры и отправить в бот
+      - name: Заменить субтитры
         run: python3 scripts/resub.py
+      - name: Сохранить кадры-проверки
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add resub_preview 2>/dev/null || true
+          git commit -m "resub: кадры-проверки (маленькие субтитры)" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+          done
