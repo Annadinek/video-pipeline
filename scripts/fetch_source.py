@@ -37,7 +37,9 @@ def main():
 
     # Перебираем клиентов, которые отдают ПРЯМЫЕ ссылки (web сейчас часто SABR).
     fmt = "bestvideo[height<=1440]+bestaudio/best[height<=1440]/bv*+ba/b/18"
-    for client in ("ios", "android", "tv_embedded", "mweb", "web"):
+    # creator-клиенты часто отдают потоки для СВОИХ (владельца) видео
+    for client in ("web_creator", "android_creator", "ios", "android",
+                   "tv_embedded", "mweb", "web"):
         print(f"--- пробую клиент {client} ---")
         r = run(["yt-dlp", "--no-warnings", *cookie_args,
                  "--extractor-args", f"youtube:player_client={client}",
