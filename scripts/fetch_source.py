@@ -24,7 +24,9 @@ def main():
     os.makedirs("source_frames", exist_ok=True)
     cookies = os.environ.get("YT_COOKIES", "").strip()
     cmd = ["yt-dlp", "--no-warnings",
-           "-f", "137+140/bestvideo[height<=1080][ext=mp4]+bestaudio/best",
+           # web-клиент с cookies отдаёт полный список форматов
+           "--extractor-args", "youtube:player_client=web,mweb",
+           "-f", "bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio/best",
            "--merge-output-format", "mp4", "-o", "src.mp4"]
     if cookies:
         with open("cookies.txt", "w") as f:
