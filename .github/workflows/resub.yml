@@ -30,6 +30,14 @@ on:
         description: "1 = вынуть СЫРЫЕ кадры оригинальных клипов (проверить растяжение), без обработки"
         required: false
         default: "0"
+      squeeze:
+        description: "Горизонтальное сжатие против «широкого лица» (0.90 = на 10%). 0 = выкл"
+        required: false
+        default: "0"
+      captions_file:
+        description: "Файл с подписями по номеру клипа (JSON). Пусто = «Ролик N»"
+        required: false
+        default: ""
 
 concurrency:
   group: resub
@@ -51,6 +59,8 @@ jobs:
       FONT_SIZE: ${{ github.event.inputs.font_size || '44' }}
       PREVIEW_ONLY: ${{ github.event.inputs.preview_only || '0' }}
       RAW_ONLY: ${{ github.event.inputs.raw_only || '0' }}
+      SQUEEZE: ${{ github.event.inputs.squeeze || '0' }}
+      CAPTIONS_FILE: ${{ github.event.inputs.captions_file || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Инструменты

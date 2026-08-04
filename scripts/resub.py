@@ -155,6 +155,15 @@ def main():
         raise SystemExit("Не задан VIZARD_PROJECT_ID.")
     clips = query_clips()
     os.makedirs("resub", exist_ok=True)
+    # Готовые подписи по номеру клипа (если задан файл).
+    captions = {}
+    cf = os.environ.get("CAPTIONS_FILE", "").strip()
+    if cf and os.path.exists(cf):
+        import json
+        with open(cf, encoding="utf-8") as f:
+            captions = json.load(f)
+    # Горизонтальное сжатие для «широкого лица» (0.90 = уже на 10%). 0 = выкл.
+    squeeze = float(os.environ.get("SQUEEZE", "0") or "0")
     done = 0
     for idx in INDICES:
         if idx < 1 or idx > len(clips):
@@ -174,6 +183,33 @@ def main():
             os.remove(src)
             done += 1
             print(f"клип {idx}: сырые кадры в resub_preview/")
+            continue
+        # Режим сжатия: убрать растяжение (широкое лицо) — сжать по горизонтали
+        # и вернуть кадр в 9:16 без искажения. Субтитры и всё остальное не трогаем.
+        if squeeze and squeeze > 0:
+            out = f"resub/sq_{idx}.mp4"
+            vf = (f"scale=iw*{squeeze}:ih,scale=1080:-1,"
+                  f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2")
+            subprocess.run(["ffmpeg", "-y", "-i", src, "-vf", vf,
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                            "-c:a", "aac", "-b:a", "128k", out],
+                           check=True, capture_output=True)
+            cap = captions.get(str(idx)) or f"Ролик {idx}"
+            if os.environ.get("PREVIEW_ONLY", "0") == "1":
+                os.makedirs("resub_preview", exist_ok=True)
+                subprocess.run(["ffmpeg", "-y", "-ss", "1.5", "-i", out, "-frames:v", "1",
+                                "-q:v", "3", f"resub_preview/sq{idx}.jpg"],
+                               check=True, capture_output=True)
+                print(f"клип {idx}: сжат ({squeeze}), кадр в resub_preview/")
+            else:
+                tg.send_video(out, caption=cap)
+                print(f"клип {idx}: сжат ({squeeze}), отправлен")
+            for p in (src, out):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            done += 1
             continue
         words = transcribe_words(src)
         if not words:
