@@ -23,22 +23,31 @@ def run(cmd):
 def main():
     os.makedirs("source_frames", exist_ok=True)
     cookies = os.environ.get("YT_COOKIES", "").strip()
-    cmd = ["yt-dlp", "--no-warnings",
-           # web-клиент с cookies отдаёт полный список форматов
-           "--extractor-args", "youtube:player_client=web,mweb",
-           "-f", "bestvideo[height<=1440]+bestaudio/bestvideo+bestaudio/best",
-           "--merge-output-format", "mp4", "-o", "src.mp4"]
+    cookie_args = []
     if cookies:
         with open("cookies.txt", "w") as f:
             f.write(cookies if cookies.endswith("\n") else cookies + "\n")
-        cmd += ["--cookies", "cookies.txt"]
-        print("YT_COOKIES найден — качаю с cookies.")
+        cookie_args = ["--cookies", "cookies.txt"]
+        print("YT_COOKIES найден.")
     else:
-        print("YT_COOKIES ПУСТ — пробую без cookies (вероятен 403).")
-    cmd += [URL]
-    r = run(cmd)
+        print("YT_COOKIES ПУСТ — вероятен 403.")
+
+    # Сначала показываем, какие форматы вообще доступны (для диагностики).
+    run(["yt-dlp", "--no-warnings", *cookie_args, "--list-formats", URL])
+
+    # Перебираем клиентов, которые отдают ПРЯМЫЕ ссылки (web сейчас часто SABR).
+    fmt = "bestvideo[height<=1440]+bestaudio/best[height<=1440]/bv*+ba/b/18"
+    for client in ("ios", "android", "tv_embedded", "mweb", "web"):
+        print(f"--- пробую клиент {client} ---")
+        r = run(["yt-dlp", "--no-warnings", *cookie_args,
+                 "--extractor-args", f"youtube:player_client={client}",
+                 "-f", fmt, "--merge-output-format", "mp4",
+                 "-o", "src.mp4", URL])
+        if os.path.exists("src.mp4"):
+            print(f"СКАЧАЛОСЬ клиентом {client}.")
+            break
     if not os.path.exists("src.mp4"):
-        raise SystemExit("НЕ СКАЧАЛОСЬ. Скорее всего нужен рабочий YT_COOKIES.")
+        raise SystemExit("НЕ СКАЧАЛОСЬ ни одним клиентом. Возможно, cookies устарели.")
 
     # разрешение
     probe = run(["ffprobe", "-v", "error", "-select_streams", "v:0",
