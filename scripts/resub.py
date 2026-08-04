@@ -130,7 +130,7 @@ def render(clip_path, ass_path, out_path):
     # split → нижнюю полосу сильно размыть → вернуть на место → новые субтитры
     fc = (
         f"[0:v]split=2[base][t];"
-        f"[t]crop=iw:ih*{b}:0:ih-ih*{b},boxblur=luma_radius=24:luma_power=3[bl];"
+        f"[t]crop=iw:ih*{b}:0:ih-ih*{b},boxblur=luma_radius=40:luma_power=4[bl];"
         f"[base][bl]overlay=0:H-h[bg];"
         f"[bg]ass={ass_path}[v]"
     )
