@@ -26,8 +26,9 @@ API = "https://elb-api.vizard.ai/hvizard-server-front/open-api/v1"
 PROJECT_ID = os.environ.get("VIZARD_PROJECT_ID", "").strip()
 # Какие клипы обрабатывать: 1-based номера через запятую (как в списке в боте).
 INDICES = [int(x) for x in os.environ.get("INDICES", "1").split(",") if x.strip()]
-# Доля кадра сверху, которую ОСТАВЛЯЕМ (низ со старыми субтитрами отрезаем).
-KEEP_TOP = float(os.environ.get("KEEP_TOP", "0.80"))
+# Доля кадра снизу, которую РАЗМЫВАЕМ, чтобы спрятать старые крупные субтитры
+# (кадр НЕ обрезаем и НЕ искажаем — просто мажем полосу внизу).
+BLUR_BAND = float(os.environ.get("BLUR_BAND", "0.18"))
 # Размер новых субтитров (шрифт ASS). «Маленькие» — 44.
 FONT_SIZE = int(os.environ.get("FONT_SIZE", "44"))
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
@@ -123,14 +124,19 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 def render(clip_path, ass_path, out_path):
-    """Один проход: отрезаем низ со старыми субтитрами, тянем в 9:16, вбиваем новые."""
-    keep = KEEP_TOP
-    vf = (f"crop=iw:ih*{keep}:0:0,"        # оставить верх (низ со старыми субтитрами отрезан)
-          f"scale=-2:1920,"                # вернуть высоту 1920 (лёгкий зум, без искажения)
-          f"crop=1080:1920:(iw-1080)/2:0,"  # выровнять ширину по центру
-          f"ass={ass_path}")
+    """Один проход БЕЗ обрезки и искажения: размываем нижнюю полосу со старыми
+    субтитрами и поверх вбиваем новые маленькие."""
+    b = BLUR_BAND
+    # split → нижнюю полосу сильно размыть → вернуть на место → новые субтитры
+    fc = (
+        f"[0:v]split=2[base][t];"
+        f"[t]crop=iw:ih*{b}:0:ih-ih*{b},boxblur=luma_radius=24:luma_power=3[bl];"
+        f"[base][bl]overlay=0:H-h[bg];"
+        f"[bg]ass={ass_path}[v]"
+    )
     subprocess.run(
-        ["ffmpeg", "-y", "-i", clip_path, "-vf", vf,
+        ["ffmpeg", "-y", "-i", clip_path,
+         "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
          "-c:a", "aac", "-b:a", "128k", out_path],
         check=True, capture_output=True)
@@ -164,6 +170,18 @@ def main():
         ass = build_ass(words, f"resub/subs_{idx}.ass")
         out = render(src, ass, f"resub/out_{idx}.mp4")
         cap = make_caption(clip, idx)
+        # Режим предпросмотра: вынуть кадры (низ, где субтитры) и НЕ слать в бот —
+        # чтобы Клод сам посмотрел глазами, что старых субтитров не видно.
+        if os.environ.get("PREVIEW_ONLY", "0") == "1":
+            os.makedirs("resub_preview", exist_ok=True)
+            dur = (clip.get("videoMsDuration") or 0) / 1000
+            for tag, ss in (("a", "1.5"), ("b", f"{max(dur/2, 2):.1f}")):
+                subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", out, "-frames:v", "1",
+                                "-q:v", "3", f"resub_preview/r{idx}{tag}.jpg"],
+                               check=True, capture_output=True)
+            print(f"клип {idx}: {len(words)} слов, кадры в resub_preview/ (в бот не слал)")
+            done += 1
+            continue
         size = os.path.getsize(out) / 1e6
         if size <= 49:
             tg.send_video(out, caption=cap)
@@ -176,7 +194,7 @@ def main():
                 pass
         done += 1
         print(f"клип {idx}: {len(words)} слов, отправлен")
-    print(f"ГОТОВО: обработано и отправлено {done} из {len(INDICES)}.")
+    print(f"ГОТОВО: обработано {done} из {len(INDICES)}.")
 
 
 if __name__ == "__main__":
