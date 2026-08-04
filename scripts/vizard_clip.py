@@ -151,12 +151,20 @@ def main():
     tg.send_message(f"Vizard нарезал {len(clips)} клипов по видео. Показываю лучшие "
                     f"{min(MAX_SEND, len(clips))} (по оценке виральности). "
                     "По каждому: «ок / убрать / исправить».")
+    # Готовые подписи по номеру клипа (название + текст голосом Анны).
+    captions = {}
+    cf = os.environ.get("CAPTIONS_FILE", "").strip()
+    if cf and os.path.exists(cf):
+        import json
+        with open(cf, encoding="utf-8") as f:
+            captions = json.load(f)
+        print(f"Подписи взяты из {cf}: {len(captions)} шт.")
     sent = 0
     for i, c in enumerate(clips[:MAX_SEND], 1):
         title = (c.get("title") or "").strip()
         vs = c.get("viralScore") or "—"
         dur = round((c.get("videoMsDuration") or 0) / 1000)
-        cap = f"Клип {i} • {dur} c • виральность {vs}/10\n{title}"
+        cap = captions.get(str(i)) or f"Клип {i} • {dur} c • виральность {vs}/10\n{title}"
         url = c.get("videoUrl")
         try:
             path = download(url, os.path.join("shorts", f"vizard_{i}.mp4"))

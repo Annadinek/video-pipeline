@@ -31,6 +31,10 @@ on:
         description: "Сколько клипов слать в бот на проверку"
         required: false
         default: "6"
+      captions_file:
+        description: "Файл с готовыми подписями по номеру клипа (JSON). Пусто = стандартная подпись"
+        required: false
+        default: ""
 
 concurrency:
   group: vizard
@@ -52,6 +56,7 @@ jobs:
       PREVIEW_ONLY: ${{ github.event.inputs.preview_only || '0' }}
       VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id || '' }}
       VIZARD_MAX_SEND: ${{ github.event.inputs.max_send || '6' }}
+      CAPTIONS_FILE: ${{ github.event.inputs.captions_file || '' }}
     steps:
       - uses: actions/checkout@v4
       - name: Инструменты
