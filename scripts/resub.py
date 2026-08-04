@@ -187,6 +187,13 @@ def main():
         # чтобы посмотреть глазами, растянут ли он.
         if os.environ.get("RAW_ONLY", "0") == "1":
             os.makedirs("resub_preview", exist_ok=True)
+            # Параметры пикселя/сторон — чтобы поймать «неквадратный пиксель» (SAR).
+            pr = subprocess.run(
+                ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                 "stream=width,height,sample_aspect_ratio,display_aspect_ratio",
+                 "-of", "default=noprint_wrappers=1", src],
+                capture_output=True, text=True)
+            print(f"клип {idx} параметры:\n{pr.stdout.strip()}")
             dur = (clip.get("videoMsDuration") or 0) / 1000
             for tag, ss in (("a", "1.5"), ("b", f"{max(dur/2, 2):.1f}")):
                 subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", src, "-frames:v", "1",
