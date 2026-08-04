@@ -26,6 +26,10 @@ on:
         description: "1 = вынуть кадры на проверку (в бот не слать), 0 = слать в бот"
         required: false
         default: "0"
+      raw_only:
+        description: "1 = вынуть СЫРЫЕ кадры оригинальных клипов (проверить растяжение), без обработки"
+        required: false
+        default: "0"
 
 concurrency:
   group: resub
@@ -46,6 +50,7 @@ jobs:
       BLUR_BAND: ${{ github.event.inputs.blur_band || '0.18' }}
       FONT_SIZE: ${{ github.event.inputs.font_size || '44' }}
       PREVIEW_ONLY: ${{ github.event.inputs.preview_only || '0' }}
+      RAW_ONLY: ${{ github.event.inputs.raw_only || '0' }}
     steps:
       - uses: actions/checkout@v4
       - name: Инструменты

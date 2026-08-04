@@ -162,6 +162,19 @@ def main():
             continue
         clip = clips[idx - 1]
         src = download(clip["videoUrl"], f"resub/src_{idx}.mp4")
+        # Режим «сырой кадр»: вынуть кадры оригинального клипа Vizard (без обработки),
+        # чтобы посмотреть глазами, растянут ли он.
+        if os.environ.get("RAW_ONLY", "0") == "1":
+            os.makedirs("resub_preview", exist_ok=True)
+            dur = (clip.get("videoMsDuration") or 0) / 1000
+            for tag, ss in (("a", "1.5"), ("b", f"{max(dur/2, 2):.1f}")):
+                subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", src, "-frames:v", "1",
+                                "-q:v", "3", f"resub_preview/raw{idx}{tag}.jpg"],
+                               check=True, capture_output=True)
+            os.remove(src)
+            done += 1
+            print(f"клип {idx}: сырые кадры в resub_preview/")
+            continue
         words = transcribe_words(src)
         if not words:
             tg.send_message(f"Ролик {idx}: речь не распозналась, пропускаю.")
