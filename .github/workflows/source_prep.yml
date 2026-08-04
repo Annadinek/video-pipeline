@@ -1,0 +1,39 @@
+# source_prep.yml — проверка скачивания большого видео с YouTube (через cookies)
+# и поиск места вшитых субтитров: качает видео, вынимает 3 кадра, коммитит их.
+name: source-prep
+
+on:
+  workflow_dispatch:
+    inputs:
+      src_url:
+        description: "Ссылка на большое видео YouTube"
+        required: true
+        default: "https://www.youtube.com/watch?v=CuAcjA0lWr4"
+
+jobs:
+  prep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      SRC_URL: ${{ github.event.inputs.src_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet -U yt-dlp
+      - name: Скачать и вынуть кадры
+        run: python3 scripts/fetch_source.py
+      - name: Сохранить кадры
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add source_frames 2>/dev/null || true
+          git commit -m "source-prep: кадры большого видео (поиск субтитров)" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+          done
