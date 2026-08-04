@@ -171,6 +171,18 @@ def main():
             continue
         clip = clips[idx - 1]
         src = download(clip["videoUrl"], f"resub/src_{idx}.mp4")
+        # Режим «как есть»: отправить ОРИГИНАЛ клипа Vizard в бот, ничего не меняя.
+        if os.environ.get("PASSTHROUGH", "0") == "1":
+            cap = captions.get(str(idx)) or f"Ролик {idx}"
+            size = os.path.getsize(src) / 1e6
+            if size <= 49:
+                tg.send_video(src, caption=cap)
+            else:
+                tg.send_message(cap + f"\n(файл {size:.0f} МБ велик для бота)")
+            os.remove(src)
+            done += 1
+            print(f"клип {idx}: оригинал отправлен")
+            continue
         # Режим «сырой кадр»: вынуть кадры оригинального клипа Vizard (без обработки),
         # чтобы посмотреть глазами, растянут ли он.
         if os.environ.get("RAW_ONLY", "0") == "1":
