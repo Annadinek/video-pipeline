@@ -1,0 +1,46 @@
+name: loop
+
+# Расписание пока ВЫКЛЮЧЕНО — включим после успешного теста.
+# Тогда раскомментировать блок schedule ниже (6:00 и 15:00 UTC = 9:00 и 18:00 Стамбул).
+on:
+  # schedule:
+  #   - cron: '0 6,15 * * *'
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Проверяем кнопку
+        run: |
+          if grep -q "STOP" state/trigger.txt; then
+            echo "Остановлено вручную"
+            exit 0
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ставим библиотеки
+        run: pip install requests opencv-python-headless
+
+      - name: Двигаем конвейер
+        env:
+          VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python scripts/loop.py
+
+      - name: Сохраняем состояние и журналы
+        if: always()
+        run: |
+          git config user.name "loop"
+          git config user.email "loop@local"
+          git add state/ logs/
+          git commit -m "loop: шаг выполнен" || echo "нечего сохранять"
+          git push

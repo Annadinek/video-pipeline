@@ -1,0 +1,35 @@
+name: brain-sync
+
+# Расписание пока ВЫКЛЮЧЕНО — включим после успешного теста.
+# Тогда раскомментировать блок schedule ниже (22:00 UTC = 01:00 Стамбул).
+on:
+  # schedule:
+  #   - cron: '0 22 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ставим библиотеки
+        run: pip install requests google-api-python-client google-auth
+
+      - name: Тянем мозг с Диска
+        env:
+          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python scripts/sync_brain.py
+
+      - name: Сохраняем
+        run: |
+          git config user.name "brain-sync"
+          git config user.email "sync@local"
+          git add brain/
+          git commit -m "мозг обновлён с Диска" || echo "изменений нет"
+          git push
