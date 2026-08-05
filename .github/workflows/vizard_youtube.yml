@@ -23,6 +23,10 @@ on:
         description: "Только отметить N клипов как уже выложенные (учёт), без загрузки: 1/0"
         required: false
         default: "0"
+      captions_file:
+        description: "Файл с подписями по номеру клипа (JSON). Пусто = автозаголовок"
+        required: false
+        default: "captions_freedom.json"
 
 concurrency:
   group: vizard-youtube
@@ -43,13 +47,15 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       # По расписанию inputs нет — берём текущую задачу довыкладывания по умолчанию.
       VIDEO: ${{ github.event.inputs.video || 'CuAcjA0lWr4' }}
-      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id || '33099287' }}
+      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id || '33108048' }}
       YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload || '6' }}
       INIT_MARK: ${{ github.event.inputs.init_mark || '0' }}
+      CAPTIONS_FILE: ${{ github.event.inputs.captions_file || 'captions_freedom.json' }}
     steps:
       - uses: actions/checkout@v4
       - name: Библиотеки
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           python3 -m pip install --quiet requests \
             google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
       - name: Выложить клипы в YouTube Shorts
@@ -59,8 +65,9 @@ jobs:
         run: |
           git config user.name "video-pipeline-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add shorts_published.json 2>/dev/null || true
+          git add shorts_published.json log.md 2>/dev/null || true
           git commit -m "shorts: учёт выложенных в YouTube" || echo "нечего коммитить"
+          BR="${GITHUB_REF_NAME}"
           for i in 1 2 3 4; do
-            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+            git pull --rebase origin "$BR" && git push origin "HEAD:$BR" && break || sleep $((i*3))
           done
