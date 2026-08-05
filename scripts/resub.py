@@ -343,17 +343,17 @@ def main():
                     pass
             done += 1
             continue
-        # Режим сужения лица: сжимаем картинку по горизонтали (лицо у́же), БЕЗ зума
-        # и без смены кадра — по бокам мягкое размытие того же кадра (не чёрные полосы).
+        # Режим сужения экрана: НЕ обрезаем и НЕ зумим — сжимаем всю картинку по
+        # ширине (экран у́же, лицо у́же). Берём ОРИГИНАЛ Vizard, только уменьшаем по
+        # ширине → качество не падает (это уменьшение, а не растяжение). Без чёрных
+        # полос и без размытых боков: сам кадр становится у́же (высота прежняя).
         if squeeze and squeeze > 0:
             out = f"resub/sq_{idx}.mp4"
-            fc = (f"[0:v]scale=1080:1920,split=2[m][b];"
-                  f"[b]boxblur=luma_radius=40:luma_power=3[bg];"
-                  f"[m]scale=iw*{squeeze}:1920[fg];"
-                  f"[bg][fg]overlay=(W-w)/2:0[v]")
+            # новая ширина = кратна 2 (требование кодека), высота исходная
+            fc = (f"scale=trunc(iw*{squeeze}/2)*2:ih")
             subprocess.run(["ffmpeg", "-y", "-i", src,
-                            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
-                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                            "-vf", fc, "-map", "0:v", "-map", "0:a?",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                             "-c:a", "aac", "-b:a", "128k", out],
                            check=True, capture_output=True)
             cap = captions.get(str(idx)) or f"Ролик {idx}"
