@@ -38,6 +38,14 @@ on:
         description: "1 = отправить ОРИГИНАЛ клипа Vizard как есть (без обработки)"
         required: false
         default: "0"
+      match20:
+        description: "1 = кадрировать «как эталон 20» (убрать полосы + приблизить лицо), без искажения"
+        required: false
+        default: "0"
+      target_fill:
+        description: "Доля высоты кадра под лицо (0.40 = как эталон 20; больше = ближе)"
+        required: false
+        default: "0.40"
       captions_file:
         description: "Файл с подписями по номеру клипа (JSON). Пусто = «Ролик N»"
         required: false
@@ -65,6 +73,9 @@ jobs:
       RAW_ONLY: ${{ github.event.inputs.raw_only || '0' }}
       SQUEEZE: ${{ github.event.inputs.squeeze || '0' }}
       PASSTHROUGH: ${{ github.event.inputs.passthrough || '0' }}
+      MATCH20: ${{ github.event.inputs.match20 || '0' }}
+      TARGET_FILL: ${{ github.event.inputs.target_fill || '0.40' }}
+      FACE_MODEL: face_landmarker.task
       CAPTIONS_FILE: ${{ github.event.inputs.captions_file || '' }}
     steps:
       - uses: actions/checkout@v4
@@ -72,6 +83,12 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
           python3 -m pip install --quiet requests faster-whisper
+          # для режима MATCH20 (поиск лица) — mediapipe + opencv + модель
+          if [ "${MATCH20}" = "1" ]; then
+            python3 -m pip install --quiet mediapipe opencv-python-headless
+            curl -sSL -o face_landmarker.task \
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+          fi
       - name: Заменить субтитры
         run: python3 scripts/resub.py
       - name: Сохранить кадры-проверки
@@ -80,7 +97,8 @@ jobs:
           git config user.name "video-pipeline-bot"
           git config user.email "bot@users.noreply.github.com"
           git add resub_preview 2>/dev/null || true
-          git commit -m "resub: кадры-проверки (маленькие субтитры)" || echo "нечего коммитить"
+          git commit -m "resub: кадры-проверки" || echo "нечего коммитить"
+          BR="${GITHUB_REF_NAME}"
           for i in 1 2 3 4; do
-            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+            git pull --rebase origin "$BR" && git push origin "HEAD:$BR" && break || sleep $((i*3))
           done
