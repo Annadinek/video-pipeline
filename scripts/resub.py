@@ -203,13 +203,16 @@ def main():
             done += 1
             print(f"клип {idx}: сырые кадры в resub_preview/")
             continue
-        # Режим сжатия: убрать растяжение (широкое лицо) — сжать по горизонтали
-        # и вернуть кадр в 9:16 без искажения. Субтитры и всё остальное не трогаем.
+        # Режим сужения лица: сжимаем картинку по горизонтали (лицо у́же), БЕЗ зума
+        # и без смены кадра — по бокам мягкое размытие того же кадра (не чёрные полосы).
         if squeeze and squeeze > 0:
             out = f"resub/sq_{idx}.mp4"
-            vf = (f"scale=iw*{squeeze}:ih,scale=1080:-1,"
-                  f"crop=1080:1920:(iw-1080)/2:(ih-1920)/2")
-            subprocess.run(["ffmpeg", "-y", "-i", src, "-vf", vf,
+            fc = (f"[0:v]scale=1080:1920,split=2[m][b];"
+                  f"[b]boxblur=luma_radius=40:luma_power=3[bg];"
+                  f"[m]scale=iw*{squeeze}:1920[fg];"
+                  f"[bg][fg]overlay=(W-w)/2:0[v]")
+            subprocess.run(["ffmpeg", "-y", "-i", src,
+                            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
                             "-c:a", "aac", "-b:a", "128k", out],
                            check=True, capture_output=True)
