@@ -3,33 +3,34 @@
 audio_clean.py — обработка звука ролика.
 
 Вход:  outputs/ready/[id]/clip.mp4
-Выход: outputs/ready/[id]/clip_audio_clean.mp4      (паузы + шум + громкость)
-       outputs/ready/[id]/clip_audio_nodenoise.mp4  (то же, но БЕЗ шумоподавления —
-                                                      чтобы Анна сравнила на слух)
+Выход (обычный режим): два файла для сравнения на слух —
+       outputs/ready/[id]/clip_audio_clean.mp4      (с шумоподавлением)
+       outputs/ready/[id]/clip_audio_nodenoise.mp4  (без шумоподавления)
 
-Три шага:
-1. Паузы. ffmpeg silencedetect, порог и минимум из presets/audio.json.
-   Вырезаю из видео и звука одновременно, оставляя по keep_edge_sec с каждого края.
-   Режу пересборкой отрезков (trim+concat одним проходом), не аудиофильтром,
-   чтобы звук и картинка не разъехались.
-   Пауз не найдено — резку пропускаю, но шаги 2 и 3 выполняю обязательно.
-2. Шум. Управляется presets/audio.json → "denoise":
-   "on"  — сначала arnndn (если рядом модель .rnnn), иначе afftdn. Мягко.
-   "off" — шаг пропускается, в отчёт пишется denoise: "off".
-3. Громкость. loudnorm в два прохода до target_lufs, пик не выше true_peak_db.
+ПОРЯДОК ФИЛЬТРОВ (строгий, менять нельзя):
+  1) highpass=f=80  — обрезка низов (уличный гул) ДО шумодава
+  2) afftdn         — шумоподавление (уровень low/medium/high или off)
+  3) compand        — компрессия
+  4) loudnorm       — целевая громкость (2 прохода)
+Резка пауз — ПОСЛЕ всех фильтров, чтобы метки времени не сбились.
 
-Настройки берутся из presets/audio.json. Файла нет — значения по умолчанию,
-поведение как раньше. Резка пауз и громкость не меняются от наличия файла.
+Настройки — presets/audio.json (сломан/нет файла → умолчания, не падаем):
+  denoise           on/off
+  denoise_strength  low/medium/high   (сила afftdn от мягкого к сильному)
+  pauses            on/off
+  target_lufs, true_peak_db           (читаются отсюда, не зашиты в код)
 
-Только Python 3, ffmpeg и стандартная библиотека. Ничего не скачивает.
-Исходник не трогает.
+Режим сравнения (--compare, включается только в audio-test.yml):
+  берёт 30-секундный отрезок с речью и прогоняет его четырежды —
+  без шумодава, low, medium, high — кладёт четыре файла с понятными именами.
 
-Отчёт цифрами печатается в stdout и, если найден state/pipeline.json с current
-того же id, записывается в current.audio.
+Отчёт цифрами: громкость до/после, пик до/после, разброс LRA, уровень
+шумодава, параметры компрессии.
+
+Только Python 3, ffmpeg и стандартная библиотека. Исходник не трогает.
 """
 
 import argparse
-import glob
 import json
 import os
 import re
@@ -41,22 +42,33 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "logs")
 CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
 
-# Значения по умолчанию — совпадают с прежним поведением.
-# target_lufs и true_peak_db взяты из stages/05-qa/PROMPT.md (в RULES.md их нет).
 DEFAULTS = {
     "denoise": "on",
+    "denoise_strength": "medium",
     "pauses": "on",
     "silence_threshold_db": -35,
     "silence_min_sec": 0.45,
     "keep_edge_sec": 0.12,
-    "target_lufs": -16,
+    "target_lufs": -14,
     "true_peak_db": -1,
 }
-LOUDNORM_LRA = 11  # разброс громкости; поведение громкости не меняем
+LOUDNORM_LRA = 11  # целевой разброс громкости для loudnorm
+
+# Порядок и значения фиксированы заданием.
+HIGHPASS = "highpass=f=80"
+COMPAND = "compand=attacks=0.02:decays=0.3:points=-70/-70|-30/-18|-15/-10|0/-5:gain=0"
+# afftdn от мягкого к сильному. Отправная точка; уточняется по режиму сравнения.
+STRENGTH = {
+    "low":    "afftdn=nr=6:nf=-30",
+    "medium": "afftdn=nr=12:nf=-25",
+    "high":   "afftdn=nr=24:nf=-20",
+}
+COMPARE_LEVELS = ["off", "low", "medium", "high"]
+COMPARE_NAMES = {"off": "nodenoise", "low": "low", "medium": "medium", "high": "high"}
+SPEECH_WINDOW_SEC = 30
 
 
 def die(msg, code):
-    """Внятно сообщить и выйти с кодом (для loop.py: нет ffmpeg → blocked)."""
     print(msg, file=sys.stderr)
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -68,11 +80,7 @@ def die(msg, code):
 
 
 def load_config():
-    """
-    Прочитать presets/audio.json поверх умолчаний.
-    Файла нет → умолчания. Файл сломан/нечитаем → умолчания, статус
-    'corrupted, using defaults'. Никогда не падаем из-за конфига.
-    """
+    """presets/audio.json поверх умолчаний. Сломан/нет файла → умолчания, не падаем."""
     cfg = dict(DEFAULTS)
     status = "defaults (нет файла)"
     if os.path.exists(CONFIG_PATH):
@@ -80,30 +88,44 @@ def load_config():
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 user = json.load(f)
             if not isinstance(user, dict):
-                raise ValueError("presets/audio.json — не объект JSON")
+                raise ValueError("не объект JSON")
             for k in DEFAULTS:
                 if k in user and user[k] is not None:
                     cfg[k] = user[k]
             status = "ok (presets/audio.json)"
-        except Exception:            # любой сбой чтения/разбора — не падаем
+        except Exception:
             cfg = dict(DEFAULTS)
             status = "corrupted, using defaults"
-    cfg["denoise_on"] = str(cfg["denoise"]).strip().lower() != "off"
     cfg["pauses_on"] = str(cfg["pauses"]).strip().lower() != "off"
     cfg["_config_status"] = status
     return cfg
 
 
+def denoise_level(cfg):
+    """Итоговый уровень шумодава: 'off' | 'low' | 'medium' | 'high'."""
+    if str(cfg["denoise"]).strip().lower() == "off":
+        return "off"
+    lv = str(cfg["denoise_strength"]).strip().lower()
+    return lv if lv in STRENGTH else "medium"
+
+
+def build_pre(level):
+    """Цепочка фильтров ДО loudnorm в строгом порядке: highpass[,afftdn],compand."""
+    parts = [HIGHPASS]
+    if level != "off":
+        parts.append(STRENGTH[level])
+    parts.append(COMPAND)
+    return ",".join(parts)
+
+
 def run(cmd):
-    """Запустить ffmpeg/ffprobe, вернуть (returncode, stdout, stderr)."""
     p = subprocess.run(cmd, capture_output=True, text=True)
     return p.returncode, p.stdout, p.stderr
 
 
 def ffprobe_duration(ffprobe, path):
     rc, out, err = run([
-        ffprobe, "-v", "error",
-        "-show_entries", "format=duration",
+        ffprobe, "-v", "error", "-show_entries", "format=duration",
         "-of", "csv=p=0", path,
     ])
     if rc != 0 or not out.strip():
@@ -111,8 +133,47 @@ def ffprobe_duration(ffprobe, path):
     return float(out.strip())
 
 
+def loudnorm_measure(ffmpeg, src, pre, cfg):
+    """1-й проход loudnorm: измерить. pre — фильтры до loudnorm ('' = ничего)."""
+    chain = (pre + "," if pre else "") + (
+        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
+        ":print_format=json"
+    )
+    _, _, err = run([ffmpeg, "-hide_banner", "-i", src, "-af", chain, "-f", "null", "-"])
+    start, end = err.rfind("{"), err.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise RuntimeError(f"loudnorm не отдал измерения: {err.strip()[-400:]}")
+    return json.loads(err[start:end + 1])
+
+
+def loudnorm_apply(ffmpeg, src, pre, measured, out, cfg):
+    """2-й проход loudnorm: применить измеренное. Видео копируем, меняем только звук."""
+    chain = (pre + "," if pre else "") + (
+        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
+        f":measured_I={measured['input_i']}"
+        f":measured_TP={measured['input_tp']}"
+        f":measured_LRA={measured['input_lra']}"
+        f":measured_thresh={measured['input_thresh']}"
+        f":offset={measured['target_offset']}"
+        f":linear=true:print_format=summary"
+    )
+    rc, _, err = run([
+        ffmpeg, "-y", "-hide_banner", "-i", src, "-af", chain,
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
+    ])
+    if rc != 0:
+        raise RuntimeError(f"loudnorm (2-й проход) не удался: {err.strip()[-400:]}")
+
+
+def measure_loudness(ffmpeg, path, cfg):
+    """Вернуть (I, TP, LRA) файла — для отчёта до/после."""
+    m = loudnorm_measure(ffmpeg, path, "", cfg)
+    return (round(float(m["input_i"]), 1),
+            round(float(m["input_tp"]), 1),
+            round(float(m["input_lra"]), 1))
+
+
 def detect_silences(ffmpeg, path, cfg):
-    """Вернуть список пауз [(start, end), ...] по silencedetect."""
     _, _, err = run([
         ffmpeg, "-hide_banner", "-i", path,
         "-af", f"silencedetect=noise={cfg['silence_threshold_db']}dB:d={cfg['silence_min_sec']}",
@@ -126,31 +187,19 @@ def detect_silences(ffmpeg, path, cfg):
         m = re.search(r"silence_end:\s*([-\d.]+)", line)
         if m:
             ends.append(float(m.group(1)))
-    silences = []
-    for i, s in enumerate(starts):
-        e = ends[i] if i < len(ends) else None  # пауза до конца файла
-        silences.append((s, e))
-    return silences
+    return [(s, ends[i] if i < len(ends) else None) for i, s in enumerate(starts)]
 
 
 def keep_segments(silences, duration, cfg):
-    """
-    Из пауз собрать отрезки, которые ОСТАВЛЯЕМ.
-    Режем только внутреннюю часть паузы: [start+pad, end-pad].
-    Возвращает (keep, pauses_cut).
-    """
     pad = cfg["keep_edge_sec"]
     cuts = []
     for s, e in silences:
         end = duration if e is None else e
-        cut_s = s + pad
-        cut_e = end - pad
-        if cut_e > cut_s:               # пауза длиннее 2*pad — есть что резать
+        cut_s, cut_e = s + pad, end - pad
+        if cut_e > cut_s:
             cuts.append((cut_s, cut_e))
     cuts.sort()
-
-    keep = []
-    cursor = 0.0
+    keep, cursor = [], 0.0
     for cut_s, cut_e in cuts:
         if cut_s > cursor:
             keep.append((cursor, cut_s))
@@ -160,11 +209,8 @@ def keep_segments(silences, duration, cfg):
     return keep, len(cuts)
 
 
-def build_cut(ffmpeg, src, keep, work_dir):
-    """
-    Пересобрать видео из отрезков keep (trim+concat одним проходом).
-    Видео и звук режутся по одинаковым интервалам — рассинхрона нет.
-    """
+def build_cut(ffmpeg, src, keep, out, work_dir, tag):
+    """Пересобрать видео из отрезков keep (trim+concat одним проходом). Звук и картинка не разъезжаются."""
     parts, labels = [], []
     for i, (s, e) in enumerate(keep):
         parts.append(
@@ -172,109 +218,84 @@ def build_cut(ffmpeg, src, keep, work_dir):
             f"[0:a]atrim=start={s:.3f}:end={e:.3f},asetpts=PTS-STARTPTS[a{i}]"
         )
         labels.append(f"[v{i}][a{i}]")
-    graph = ";".join(parts) + ";" + "".join(labels) + \
-        f"concat=n={len(keep)}:v=1:a=1[v][a]"
-
-    graph_file = os.path.join(work_dir, "cut_filter.txt")
+    graph = ";".join(parts) + ";" + "".join(labels) + f"concat=n={len(keep)}:v=1:a=1[v][a]"
+    graph_file = os.path.join(work_dir, f"cut_{tag}.txt")
     with open(graph_file, "w", encoding="utf-8") as f:
         f.write(graph)
-
-    out = os.path.join(work_dir, "cut_base.mp4")
     rc, _, err = run([
-        ffmpeg, "-y", "-hide_banner", "-i", src,
-        "-filter_complex_script", graph_file,
+        ffmpeg, "-y", "-hide_banner", "-i", src, "-filter_complex_script", graph_file,
         "-map", "[v]", "-map", "[a]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
-        out,
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
     ])
     if rc != 0:
         raise RuntimeError(f"резка пауз не удалась: {err.strip()[-400:]}")
-    return out
 
 
-def find_denoise_model():
-    """Найти локальную модель arnndn (.rnnn). Ничего не скачиваем."""
-    env = os.environ.get("AUDIO_DENOISE_MODEL")
-    if env and os.path.exists(env):
-        return env
-    for d in ("presets", "models", "scripts"):
-        found = sorted(glob.glob(os.path.join(ROOT, d, "*.rnnn")))
-        if found:
-            return found[0]
-    return None
-
-
-def denoise_filter(cfg):
+def process_one(ffmpeg, ffprobe, src, out, level, cfg, work_dir, tag):
     """
-    Вернуть (строка_фильтра, имя) для шумоподавления.
-    denoise off → ('', 'off'). on → arnndn при наличии модели, иначе afftdn. Мягко.
+    Полная цепочка: highpass[,afftdn],compand,loudnorm (2 прохода) → затем резка пауз.
+    Возвращает pauses_cut.
     """
-    if not cfg["denoise_on"]:
-        return "", "off"
-    model = find_denoise_model()
-    if model:
-        # arnndn — по нейросетевой модели; путь экранируем для filtergraph
-        safe = model.replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
-        return f"arnndn=m='{safe}'", "arnndn"
-    # afftdn — мягко: умеренное подавление, без «металлического» призвука
-    return "afftdn=nr=10:nf=-25", "afftdn"
+    pre = build_pre(level)
+    measured = loudnorm_measure(ffmpeg, src, pre, cfg)
+    filtered = os.path.join(work_dir, f"filtered_{tag}.mp4")
+    loudnorm_apply(ffmpeg, src, pre, measured, filtered, cfg)
+
+    if not cfg["pauses_on"]:
+        shutil.copyfile(filtered, out)
+        return 0
+    dur = ffprobe_duration(ffprobe, filtered)
+    silences = detect_silences(ffmpeg, filtered, cfg)
+    keep, pauses_cut = keep_segments(silences, dur, cfg)
+    if pauses_cut > 0 and keep:
+        build_cut(ffmpeg, filtered, keep, out, work_dir, tag)
+    else:
+        shutil.copyfile(filtered, out)
+        pauses_cut = 0
+    return pauses_cut
 
 
-def loudnorm_measure(ffmpeg, src, pre, cfg):
-    """
-    Первый проход loudnorm: измерить. pre — фильтры до loudnorm (шумодав или '').
-    Возвращает dict с измеренными значениями.
-    """
-    chain = (pre + "," if pre else "") + (
-        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
-        ":print_format=json"
-    )
+def mean_volume(ffmpeg, path, start, dur):
+    """Средняя громкость окна [start, start+dur] в dB — для поиска речи."""
     _, _, err = run([
-        ffmpeg, "-hide_banner", "-i", src, "-af", chain, "-f", "null", "-",
+        ffmpeg, "-hide_banner", "-ss", f"{start:.2f}", "-t", f"{dur:.2f}",
+        "-i", path, "-af", "volumedetect", "-f", "null", "-",
     ])
-    start = err.rfind("{")
-    end = err.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise RuntimeError(f"loudnorm не отдал измерения: {err.strip()[-400:]}")
-    return json.loads(err[start:end + 1])
+    m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", err)
+    return float(m.group(1)) if m else -999.0
 
 
-def loudnorm_apply(ffmpeg, src, pre, measured, out, cfg):
-    """
-    Второй проход loudnorm: применить измеренные значения (linear=true).
-    Видео копируем как есть, меняем только звук.
-    """
-    chain = (pre + "," if pre else "") + (
-        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
-        f":measured_I={measured['input_i']}"
-        f":measured_TP={measured['input_tp']}"
-        f":measured_LRA={measured['input_lra']}"
-        f":measured_thresh={measured['input_thresh']}"
-        f":offset={measured['target_offset']}"
-        f":linear=true:print_format=summary"
-    )
+def pick_speech_window(ffmpeg, ffprobe, path, dur=SPEECH_WINDOW_SEC):
+    """Найти 30-секундное окно с речью = самое громкое в среднем. Вернуть (start, dur)."""
+    total = ffprobe_duration(ffprobe, path)
+    if total <= dur:
+        return 0.0, total
+    best_start, best_mean = 0.0, -1e9
+    step = max(dur / 2.0, (total - dur) / 6.0)
+    t = 0.0
+    while t <= total - dur + 0.01:
+        mv = mean_volume(ffmpeg, path, t, dur)
+        if mv > best_mean:
+            best_start, best_mean = t, mv
+        t += step
+    return best_start, dur
+
+
+def extract_segment(ffmpeg, src, start, dur, out):
     rc, _, err = run([
-        ffmpeg, "-y", "-hide_banner", "-i", src, "-af", chain,
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-        "-movflags", "+faststart", out,
+        ffmpeg, "-y", "-hide_banner", "-ss", f"{start:.2f}", "-t", f"{dur:.2f}",
+        "-i", src, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+        "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
     ])
     if rc != 0:
-        raise RuntimeError(f"loudnorm (2-й проход) не удался: {err.strip()[-400:]}")
-
-
-def measure_loudness(ffmpeg, path, cfg):
-    """Измеренная интегральная громкость (LUFS) файла — для отчёта."""
-    m = loudnorm_measure(ffmpeg, path, "", cfg)
-    return round(float(m["input_i"]), 1)
+        raise RuntimeError(f"не удалось вырезать отрезок: {err.strip()[-300:]}")
 
 
 def write_pipeline(out_path, audio):
-    """Если рядом state/pipeline.json и current.id совпадает с [id] из пути — записать audio."""
     pipeline = os.path.join(ROOT, "state", "pipeline.json")
     if not os.path.exists(pipeline):
         return False
-    # id = имя папки outputs/ready/<id>/файл
     vid = os.path.basename(os.path.dirname(os.path.abspath(out_path)))
     try:
         with open(pipeline, encoding="utf-8") as f:
@@ -291,90 +312,108 @@ def write_pipeline(out_path, audio):
     return True
 
 
+def run_normal(ffmpeg, ffprobe, args, cfg, work_dir):
+    """Два файла: с шумодавом (по конфигу) и без — для сравнения на слух."""
+    out_clean = args.output
+    out_nodenoise = os.path.join(os.path.dirname(out_clean), "clip_audio_nodenoise.mp4")
+    level = denoise_level(cfg)
+
+    i0, tp0, lra0 = measure_loudness(ffmpeg, args.input, cfg)
+    dur_before = ffprobe_duration(ffprobe, args.input)
+
+    pauses_cut = process_one(ffmpeg, ffprobe, args.input, out_clean, level, cfg, work_dir, "clean")
+    process_one(ffmpeg, ffprobe, args.input, out_nodenoise, "off", cfg, work_dir, "nodenoise")
+
+    i1, tp1, lra1 = measure_loudness(ffmpeg, out_clean, cfg)
+    dur_after = ffprobe_duration(ffprobe, out_clean)
+
+    audio = {
+        "duration_before": round(dur_before, 2),
+        "duration_after": round(dur_after, 2),
+        "pauses_cut": pauses_cut,
+        "loudness_before": i0, "loudness_after": i1,
+        "peak_before": tp0, "peak_after": tp1,
+        "lra_after": lra1,
+        "denoise": level,
+    }
+    wrote = write_pipeline(out_clean, audio)
+
+    print("=== ОТЧЁТ audio_clean ===")
+    print(f"Конфиг:        {cfg['_config_status']}")
+    print(f"Порядок:       highpass=80 → afftdn({level}) → compand → loudnorm, паузы последними")
+    print(f"Длительность:  {round(dur_before,2)} с → {round(dur_after,2)} с "
+          f"(вырезано пауз: {pauses_cut})")
+    print(f"Громкость:     {i0} → {i1} LUFS   (цель {cfg['target_lufs']})")
+    print(f"Пик:           {tp0} → {tp1} dBTP  (потолок {cfg['true_peak_db']})")
+    print(f"Разброс LRA:   {lra0} → {lra1} LU")
+    print(f"Шумодав:       {level}" + (f"  ({STRENGTH[level]})" if level != 'off' else ""))
+    print(f"Компрессия:    {COMPAND}")
+    print(f"Файлы:         {out_clean}")
+    print(f"               {out_nodenoise}  (без шумодава, для сравнения)")
+    print(f"pipeline.json: {'обновлён (current.audio)' if wrote else 'не трогал (нет current с этим id)'}")
+    print("audio =", json.dumps(audio, ensure_ascii=False))
+    print("=========================")
+
+
+def run_compare(ffmpeg, ffprobe, args, cfg, work_dir):
+    """30-секундный отрезок с речью, прогнанный четырежды: без шумодава, low, medium, high."""
+    out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
+    start, dur = pick_speech_window(ffmpeg, ffprobe, args.input)
+    segment = os.path.join(work_dir, "compare_segment.mp4")
+    extract_segment(ffmpeg, args.input, start, dur, segment)
+
+    i0, tp0, lra0 = measure_loudness(ffmpeg, segment, cfg)
+
+    print("=== РЕЖИМ СРАВНЕНИЯ audio_clean ===")
+    print(f"Конфиг:        {cfg['_config_status']}")
+    print(f"Порядок:       highpass=80 → afftdn(<уровень>) → compand → loudnorm, паузы последними")
+    print(f"Отрезок:       {round(start,1)}–{round(start+dur,1)} с (самый громкий = речь), {round(dur,1)} с")
+    print(f"Компрессия:    {COMPAND}")
+    print(f"До обработки:  {i0} LUFS, пик {tp0} dBTP, LRA {lra0} LU")
+    print(f"Цель:          {cfg['target_lufs']} LUFS, пик ≤ {cfg['true_peak_db']} dBTP")
+    print("-" * 64)
+    print(f"{'уровень':<10}{'громкость':>12}{'пик dBTP':>12}{'LRA':>8}{'параметры afftdn':>22}")
+    print("-" * 64)
+    files = []
+    for level in COMPARE_LEVELS:
+        name = COMPARE_NAMES[level]
+        out = os.path.join(out_dir, f"compare_{name}.mp4")
+        process_one(ffmpeg, ffprobe, segment, out, level, cfg, work_dir, f"cmp_{name}")
+        i1, tp1, lra1 = measure_loudness(ffmpeg, out, cfg)
+        params = STRENGTH[level] if level != "off" else "—"
+        print(f"{name:<10}{i1:>10} LUFS{tp1:>10}  {lra1:>6}  {params:>22}")
+        files.append(out)
+    print("-" * 64)
+    for f in files:
+        print("Файл:", f)
+    print("===================================")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="outputs/ready/[id]/clip.mp4")
     ap.add_argument("--output", required=True, help="outputs/ready/[id]/clip_audio_clean.mp4")
+    ap.add_argument("--compare", action="store_true",
+                    help="режим сравнения: 30 с речи × (off/low/medium/high). Только для audio-test.")
     args = ap.parse_args()
 
     cfg = load_config()
-
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
         die("нет ffmpeg/ffprobe → blocked", 3)
-
     if not os.path.exists(args.input):
         die(f"нет входного файла: {args.input}", 2)
 
-    out_clean = args.output
-    out_nodenoise = os.path.join(
-        os.path.dirname(out_clean), "clip_audio_nodenoise.mp4"
-    )
-    out_dir = os.path.dirname(os.path.abspath(out_clean)) or "."
+    out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
     os.makedirs(out_dir, exist_ok=True)
     work_dir = os.path.join(out_dir, "work")
     os.makedirs(work_dir, exist_ok=True)
 
-    # --- измерения ДО ---
-    duration_before = ffprobe_duration(ffprobe, args.input)
-    loudness_before = measure_loudness(ffmpeg, args.input, cfg)
-
-    # --- шаг 1: паузы (управляется presets/audio.json → "pauses") ---
-    if not cfg["pauses_on"]:
-        base = args.input          # резка выключена — шум и громкость всё равно делаю
-        pauses_cut = 0
-        pause_note = 'резка отключена (pauses: "off")'
+    if args.compare:
+        run_compare(ffmpeg, ffprobe, args, cfg, work_dir)
     else:
-        silences = detect_silences(ffmpeg, args.input, cfg)
-        keep, pauses_cut = keep_segments(silences, duration_before, cfg)
-        if pauses_cut > 0 and keep:
-            base = build_cut(ffmpeg, args.input, keep, work_dir)
-            pause_note = f"вырезано пауз: {pauses_cut}"
-        else:
-            base = args.input      # пауз нет — исходник не режу, шаги 2-3 всё равно делаю
-            pause_note = "пауз не найдено, резка пропущена"
-
-    # --- шаг 2 подготовка: шум (управляется presets/audio.json) ---
-    den_filter, denoise_name = denoise_filter(cfg)
-
-    # --- clean: (шум) + громкость (2 прохода) ---
-    m_clean = loudnorm_measure(ffmpeg, base, den_filter, cfg)
-    loudnorm_apply(ffmpeg, base, den_filter, m_clean, out_clean, cfg)
-
-    # --- nodenoise: только громкость (2 прохода), для сравнения на слух ---
-    m_nd = loudnorm_measure(ffmpeg, base, "", cfg)
-    loudnorm_apply(ffmpeg, base, "", m_nd, out_nodenoise, cfg)
-
-    # --- измерения ПОСЛЕ (по реальному файлу, не из головы) ---
-    duration_after = ffprobe_duration(ffprobe, out_clean)
-    loudness_after = measure_loudness(ffmpeg, out_clean, cfg)
-
-    audio = {
-        "duration_before": round(duration_before, 2),
-        "duration_after": round(duration_after, 2),
-        "pauses_cut": pauses_cut,
-        "loudness_before": loudness_before,
-        "loudness_after": loudness_after,
-        "denoise": denoise_name,
-    }
-
-    wrote = write_pipeline(out_clean, audio)
-
-    # --- отчёт цифрами ---
-    same = "  (= clean, шумодав выключен)" if denoise_name == "off" else ""
-    print("=== ОТЧЁТ audio_clean ===")
-    print(f"Конфиг:        {cfg['_config_status']}")
-    print(f"Длительность:  {audio['duration_before']} с → {audio['duration_after']} с")
-    print(f"Паузы:         {pause_note}")
-    print(f"Громкость:     {audio['loudness_before']} LUFS → {audio['loudness_after']} LUFS "
-          f"(цель {cfg['target_lufs']}, пик ≤ {cfg['true_peak_db']} dB)")
-    print(f"Шумоподавление: {denoise_name}")
-    print(f"Файлы:         {out_clean}")
-    print(f"               {out_nodenoise}{same}")
-    print(f"pipeline.json: {'обновлён (current.audio)' if wrote else 'не трогал (нет current с этим id)'}")
-    print("audio =", json.dumps(audio, ensure_ascii=False))
-    print("=========================")
+        run_normal(ffmpeg, ffprobe, args, cfg, work_dir)
 
 
 if __name__ == "__main__":
