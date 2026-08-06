@@ -45,6 +45,7 @@ CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
 # target_lufs и true_peak_db взяты из stages/05-qa/PROMPT.md (в RULES.md их нет).
 DEFAULTS = {
     "denoise": "on",
+    "pauses": "on",
     "silence_threshold_db": -35,
     "silence_min_sec": 0.45,
     "keep_edge_sec": 0.12,
@@ -67,21 +68,29 @@ def die(msg, code):
 
 
 def load_config():
-    """Прочитать presets/audio.json поверх умолчаний. Нет файла — умолчания."""
+    """
+    Прочитать presets/audio.json поверх умолчаний.
+    Файла нет → умолчания. Файл сломан/нечитаем → умолчания, статус
+    'corrupted, using defaults'. Никогда не падаем из-за конфига.
+    """
     cfg = dict(DEFAULTS)
-    source = "умолчания (presets/audio.json нет)"
+    status = "defaults (нет файла)"
     if os.path.exists(CONFIG_PATH):
         try:
             with open(CONFIG_PATH, encoding="utf-8") as f:
                 user = json.load(f)
+            if not isinstance(user, dict):
+                raise ValueError("presets/audio.json — не объект JSON")
             for k in DEFAULTS:
                 if k in user and user[k] is not None:
                     cfg[k] = user[k]
-            source = "presets/audio.json"
-        except (OSError, ValueError) as e:
-            source = f"умолчания (presets/audio.json не читается: {e})"
+            status = "ok (presets/audio.json)"
+        except Exception:            # любой сбой чтения/разбора — не падаем
+            cfg = dict(DEFAULTS)
+            status = "corrupted, using defaults"
     cfg["denoise_on"] = str(cfg["denoise"]).strip().lower() != "off"
-    cfg["_source"] = source
+    cfg["pauses_on"] = str(cfg["pauses"]).strip().lower() != "off"
+    cfg["_config_status"] = status
     return cfg
 
 
@@ -311,15 +320,20 @@ def main():
     duration_before = ffprobe_duration(ffprobe, args.input)
     loudness_before = measure_loudness(ffmpeg, args.input, cfg)
 
-    # --- шаг 1: паузы ---
-    silences = detect_silences(ffmpeg, args.input, cfg)
-    keep, pauses_cut = keep_segments(silences, duration_before, cfg)
-    if pauses_cut > 0 and keep:
-        base = build_cut(ffmpeg, args.input, keep, work_dir)
-        pause_note = f"вырезано пауз: {pauses_cut}"
+    # --- шаг 1: паузы (управляется presets/audio.json → "pauses") ---
+    if not cfg["pauses_on"]:
+        base = args.input          # резка выключена — шум и громкость всё равно делаю
+        pauses_cut = 0
+        pause_note = 'резка отключена (pauses: "off")'
     else:
-        base = args.input          # пауз нет — исходник не режу, шаги 2-3 всё равно делаю
-        pause_note = "пауз не найдено, резка пропущена"
+        silences = detect_silences(ffmpeg, args.input, cfg)
+        keep, pauses_cut = keep_segments(silences, duration_before, cfg)
+        if pauses_cut > 0 and keep:
+            base = build_cut(ffmpeg, args.input, keep, work_dir)
+            pause_note = f"вырезано пауз: {pauses_cut}"
+        else:
+            base = args.input      # пауз нет — исходник не режу, шаги 2-3 всё равно делаю
+            pause_note = "пауз не найдено, резка пропущена"
 
     # --- шаг 2 подготовка: шум (управляется presets/audio.json) ---
     den_filter, denoise_name = denoise_filter(cfg)
@@ -350,7 +364,7 @@ def main():
     # --- отчёт цифрами ---
     same = "  (= clean, шумодав выключен)" if denoise_name == "off" else ""
     print("=== ОТЧЁТ audio_clean ===")
-    print(f"Настройки:     {cfg['_source']}")
+    print(f"Конфиг:        {cfg['_config_status']}")
     print(f"Длительность:  {audio['duration_before']} с → {audio['duration_after']} с")
     print(f"Паузы:         {pause_note}")
     print(f"Громкость:     {audio['loudness_before']} LUFS → {audio['loudness_after']} LUFS "
