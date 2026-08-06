@@ -47,6 +47,7 @@ STAGES = [
     "00-plan",
     "01-script",
     "02-cut",
+    "02b-audio",
     "03-color",
     "04-caption",
     "05-qa",
