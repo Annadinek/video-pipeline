@@ -143,6 +143,104 @@ def render(clip_path, ass_path, out_path):
     return out_path
 
 
+def detect_bars(src, dur):
+    """Ищем ЧЁРНЫЕ полосы (letterbox) сверху/снизу — Vizard иногда их оставляет.
+    Возвращаем crop-рамку (w, h, x, y). Ширину не трогаем (тёмный салон машины —
+    не полоса), полосы режем только вертикальные и не больше 25% высоты, чтобы
+    случайно не обрезать картинку."""
+    pr = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", src],
+        capture_output=True, text=True).stdout.strip()
+    W, Hh = (int(v) for v in pr.split("x"))
+    ss = f"{max(dur/2, 1):.1f}"
+    r = subprocess.run(
+        ["ffmpeg", "-ss", ss, "-i", src, "-vf", "cropdetect=18:2:0",
+         "-frames:v", "20", "-f", "null", "-"],
+        capture_output=True, text=True)
+    ys, hs = [], []
+    for _w, h, _x, y in re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", r.stderr):
+        ys.append(int(y)); hs.append(int(h))
+    if not hs:
+        return (W, Hh, 0, 0)
+    # берём самую консервативную (наибольшую) высоту контента среди кадров
+    y0 = min(ys); h0 = max(hs)
+    y0 = max(0, min(y0, Hh))
+    h0 = min(h0, Hh - y0)
+    # не режем больше 25% высоты суммарно — иначе это не полоса, а ошибка детектора
+    if (Hh - h0) > 0.25 * Hh:
+        return (W, Hh, 0, 0)
+    return (W, h0, 0, y0)
+
+
+def face_stats(src, dur, model_path, crop=None):
+    """Медиана размера лица и его центра по нескольким кадрам (через mediapipe).
+    Меряем на кадре ПОСЛЕ обрезки полос (crop), поэтому доли — от чистого контента."""
+    import cv2
+    import mediapipe as mp
+    from mediapipe.tasks import python as mpy
+    from mediapipe.tasks.python import vision
+    lm = vision.FaceLandmarker.create_from_options(
+        vision.FaceLandmarkerOptions(
+            base_options=mpy.BaseOptions(model_asset_path=model_path), num_faces=1))
+    fracs, cxs, cys = [], [], []
+    n = 10
+    for i in range(1, n + 1):
+        ss = f"{dur * i / (n + 1):.2f}"
+        tmp = "resub/_f.jpg"
+        vf = f"crop={crop[0]}:{crop[1]}:{crop[2]}:{crop[3]}" if crop else None
+        cmd = ["ffmpeg", "-y", "-ss", ss, "-i", src]
+        if vf:
+            cmd += ["-vf", vf]
+        cmd += ["-frames:v", "1", "-q:v", "3", tmp]
+        subprocess.run(cmd, check=True, capture_output=True)
+        img = cv2.imread(tmp)
+        if img is None:
+            continue
+        res = lm.detect(mp.Image(image_format=mp.ImageFormat.SRGB,
+                                 data=cv2.cvtColor(img, cv2.COLOR_BGR2RGB)))
+        if not res.face_landmarks:
+            continue
+        p = res.face_landmarks[0]
+        xs = [q.x for q in p]; ys = [q.y for q in p]
+        fracs.append(max(ys) - min(ys))
+        cxs.append((min(xs) + max(xs)) / 2)
+        cys.append((min(ys) + max(ys)) / 2)
+    if not fracs:
+        return None
+    fracs.sort(); cxs.sort(); cys.sort()
+    mid = len(fracs) // 2
+    return fracs[mid], cxs[mid], cys[mid]
+
+
+def render_match20(src, out, crop, stats):
+    """Кадрируем клип «как эталон 20»: убираем чёрные полосы и приближаем лицо так,
+    чтобы оно занимало ту же долю кадра, что в эталоне. БЕЗ искажения (равномерный
+    зум), БЕЗ размытых боков. Один проход ffmpeg, постоянная рамка (без дрожания)."""
+    target = float(os.environ.get("TARGET_FILL", "0.40"))
+    face_y = float(os.environ.get("FACE_Y", "0.45"))
+    maxzoom = float(os.environ.get("MAXZOOM", "1.7"))
+    frac, cx, cy = stats
+    cw, ch, cx0, cy0 = crop
+    W, H = 1080, 1920
+    # масштаб, чтобы лицо заняло target-долю высоты выходного кадра
+    s = target * H / (frac * ch)
+    s = min(s, maxzoom)
+    # гарантируем, что кадр покрывает 1080x1920 (без чёрных краёв)
+    s = max(s, W / cw, H / ch)
+    sw, sh = int(round(cw * s)), int(round(ch * s))
+    cropx = int(round(cx * sw - W / 2)); cropx = max(0, min(cropx, sw - W))
+    cropy = int(round(cy * sh - face_y * H)); cropy = max(0, min(cropy, sh - H))
+    fc = (f"crop={cw}:{ch}:{cx0}:{cy0},scale={sw}:{sh},"
+          f"crop={W}:{H}:{cropx}:{cropy}")
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", src, "-vf", fc, "-map", "0:v", "-map", "0:a?",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+         "-c:a", "aac", "-b:a", "128k", out],
+        check=True, capture_output=True)
+    return out, s
+
+
 def make_caption(clip, idx):
     """Короткая подпись к ролику (пока из заголовка; настоящие тексты — отдельно)."""
     title = (clip.get("title") or "").strip()
@@ -203,17 +301,68 @@ def main():
             done += 1
             print(f"клип {idx}: сырые кадры в resub_preview/")
             continue
-        # Режим сужения лица: сжимаем картинку по горизонтали (лицо у́же), БЕЗ зума
-        # и без смены кадра — по бокам мягкое размытие того же кадра (не чёрные полосы).
+        # Режим «как эталон 20»: убрать чёрные полосы + приблизить лицо до той же
+        # доли кадра, что в эталоне (клип 20). Без искажения, без размытых боков.
+        if os.environ.get("MATCH20", "0") == "1":
+            model = os.environ.get("FACE_MODEL", "face_landmarker.task")
+            dur = (clip.get("videoMsDuration") or 0) / 1000 or 30
+            crop = detect_bars(src, dur)
+            if not crop:
+                # не удалось определить — берём полный кадр по ffprobe
+                pr = subprocess.run(
+                    ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                     "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", src],
+                    capture_output=True, text=True).stdout.strip()
+                w, h = (int(v) for v in pr.split("x"))
+                crop = (w, h, 0, 0)
+            stats = face_stats(src, dur, model, crop=crop)
+            if not stats:
+                tg.send_message(f"Ролик {idx}: лицо не нашлось, пропускаю сужение.")
+                os.remove(src); continue
+            out = f"resub/m20_{idx}.mp4"
+            out, s = render_match20(src, out, crop, stats)
+            cap = captions.get(str(idx)) or f"Ролик {idx}"
+            if os.environ.get("PREVIEW_ONLY", "0") == "1":
+                os.makedirs("resub_preview", exist_ok=True)
+                for tag, ss in (("a", f"{dur*0.25:.1f}"), ("b", f"{dur*0.6:.1f}")):
+                    subprocess.run(["ffmpeg", "-y", "-ss", ss, "-i", out, "-frames:v", "1",
+                                    "-q:v", "3", f"resub_preview/m20_{idx}{tag}.jpg"],
+                                   check=True, capture_output=True)
+                print(f"клип {idx}: match20 zoom={s:.2f}, полосы {crop}, кадры в resub_preview/")
+            else:
+                size = os.path.getsize(out) / 1e6
+                if size <= 49:
+                    tg.send_video(out, caption=cap)
+                else:
+                    tg.send_message(cap + f"\n(файл {size:.0f} МБ велик для бота)")
+                print(f"клип {idx}: match20 zoom={s:.2f}, отправлен")
+            for p in (src, out):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            done += 1
+            continue
+        # Режим «узкое лицо»: делаем лицо у́же, но кадр ОСТАЁТСЯ стандартным 9:16
+        # (1080x1920) — тогда ни один плеер не растянет его обратно (из-за этого в
+        # прошлый раз лицо снова становилось широким). Как: сначала убираем чёрные
+        # полосы, потом растягиваем кадр по ВЫСОТЕ в 1/squeeze раз (лицо становится
+        # у́же во столько же), и обрезаем по центру обратно до 1080x1920. Без сжатия
+        # ширины наружу, без размытых боков, без чёрных полос. squeeze=0.75 → лицо
+        # у́же на ~25%. Берём ОРИГИНАЛ Vizard (качество не теряем).
         if squeeze and squeeze > 0:
             out = f"resub/sq_{idx}.mp4"
-            fc = (f"[0:v]scale=1080:1920,split=2[m][b];"
-                  f"[b]boxblur=luma_radius=40:luma_power=3[bg];"
-                  f"[m]scale=iw*{squeeze}:1920[fg];"
-                  f"[bg][fg]overlay=(W-w)/2:0[v]")
+            dur = (clip.get("videoMsDuration") or 0) / 1000 or 30
+            cw, ch, cx0, cy0 = detect_bars(src, dur)  # рамка без чёрных полос
+            H2 = int(round(ch / squeeze / 2) * 2)      # растяжение по высоте
+            if H2 < 1920:
+                H2 = 1920
+            off = int(((H2 - 1920) // 2) // 2 * 2)     # центрируем обрезку
+            fc = (f"crop={cw}:{ch}:{cx0}:{cy0},"
+                  f"scale={cw}:{H2},crop={cw}:1920:0:{off}")
             subprocess.run(["ffmpeg", "-y", "-i", src,
-                            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
-                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                            "-vf", fc, "-map", "0:v", "-map", "0:a?",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                             "-c:a", "aac", "-b:a", "128k", out],
                            check=True, capture_output=True)
             cap = captions.get(str(idx)) or f"Ролик {idx}"
