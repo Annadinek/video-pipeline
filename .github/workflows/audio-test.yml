@@ -1,0 +1,52 @@
+name: audio-test
+
+# Тест звука по кнопке: вводишь ссылку YouTube → качается отрезок 2 минуты →
+# прогоняется scripts/audio_clean.py → в логе отчёт цифрами, файлы в артефактах.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ставим библиотеки
+        run: |
+          pip install --quiet yt-dlp
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Скачиваем отрезок 2 минуты
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url }}            # через env — без подстановки в shell
+        run: |
+          python scripts/fetch_youtube.py \
+            --url "$URL" \
+            --output outputs/ready/audio-test/clip.mp4 \
+            --start 0:00 --seconds 120
+
+      - name: Обрабатываем звук
+        run: |
+          python scripts/audio_clean.py \
+            --input outputs/ready/audio-test/clip.mp4 \
+            --output outputs/ready/audio-test/clip_audio_clean.mp4
+
+      - name: Отдаём файлы для прослушивания
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-test-output
+          path: |
+            outputs/ready/audio-test/clip_audio_clean.mp4
+            outputs/ready/audio-test/clip_audio_nodenoise.mp4
+          if-no-files-found: ignore
