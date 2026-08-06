@@ -8,13 +8,18 @@ audio_clean.py — обработка звука ролика.
                                                       чтобы Анна сравнила на слух)
 
 Три шага:
-1. Паузы. ffmpeg silencedetect, порог -35 dB, минимум 0.45 с.
-   Вырезаю из видео и звука одновременно, оставляя по 0.12 с с каждого края.
+1. Паузы. ffmpeg silencedetect, порог и минимум из presets/audio.json.
+   Вырезаю из видео и звука одновременно, оставляя по keep_edge_sec с каждого края.
    Режу пересборкой отрезков (trim+concat одним проходом), не аудиофильтром,
    чтобы звук и картинка не разъехались.
    Пауз не найдено — резку пропускаю, но шаги 2 и 3 выполняю обязательно.
-2. Шум. Сначала arnndn (если рядом лежит модель .rnnn), иначе afftdn. Мягко.
-3. Громкость. loudnorm в два прохода до -16 LUFS, пик не выше -1 dB.
+2. Шум. Управляется presets/audio.json → "denoise":
+   "on"  — сначала arnndn (если рядом модель .rnnn), иначе afftdn. Мягко.
+   "off" — шаг пропускается, в отчёт пишется denoise: "off".
+3. Громкость. loudnorm в два прохода до target_lufs, пик не выше true_peak_db.
+
+Настройки берутся из presets/audio.json. Файла нет — значения по умолчанию,
+поведение как раньше. Резка пауз и громкость не меняются от наличия файла.
 
 Только Python 3, ffmpeg и стандартная библиотека. Ничего не скачивает.
 Исходник не трогает.
@@ -32,17 +37,21 @@ import shutil
 import subprocess
 import sys
 
-# Пороги. Взяты из задания и из stages/05-qa/PROMPT.md (громкость -16..-1),
-# в RULES.md этих цифр нет.
-SILENCE_DB = -35        # порог тишины
-SILENCE_MIN = 0.45      # минимальная длина паузы, сек
-EDGE_PAD = 0.12         # сколько оставить с каждого края паузы, сек
-TARGET_I = -16          # целевая громкость, LUFS
-TARGET_TP = -1          # потолок пика, dB
-TARGET_LRA = 11         # разброс громкости
-
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "logs")
+CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
+
+# Значения по умолчанию — совпадают с прежним поведением.
+# target_lufs и true_peak_db взяты из stages/05-qa/PROMPT.md (в RULES.md их нет).
+DEFAULTS = {
+    "denoise": "on",
+    "silence_threshold_db": -35,
+    "silence_min_sec": 0.45,
+    "keep_edge_sec": 0.12,
+    "target_lufs": -16,
+    "true_peak_db": -1,
+}
+LOUDNORM_LRA = 11  # разброс громкости; поведение громкости не меняем
 
 
 def die(msg, code):
@@ -55,6 +64,25 @@ def die(msg, code):
     except OSError:
         pass
     sys.exit(code)
+
+
+def load_config():
+    """Прочитать presets/audio.json поверх умолчаний. Нет файла — умолчания."""
+    cfg = dict(DEFAULTS)
+    source = "умолчания (presets/audio.json нет)"
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, encoding="utf-8") as f:
+                user = json.load(f)
+            for k in DEFAULTS:
+                if k in user and user[k] is not None:
+                    cfg[k] = user[k]
+            source = "presets/audio.json"
+        except (OSError, ValueError) as e:
+            source = f"умолчания (presets/audio.json не читается: {e})"
+    cfg["denoise_on"] = str(cfg["denoise"]).strip().lower() != "off"
+    cfg["_source"] = source
+    return cfg
 
 
 def run(cmd):
@@ -74,11 +102,11 @@ def ffprobe_duration(ffprobe, path):
     return float(out.strip())
 
 
-def detect_silences(ffmpeg, path):
+def detect_silences(ffmpeg, path, cfg):
     """Вернуть список пауз [(start, end), ...] по silencedetect."""
     _, _, err = run([
         ffmpeg, "-hide_banner", "-i", path,
-        "-af", f"silencedetect=noise={SILENCE_DB}dB:d={SILENCE_MIN}",
+        "-af", f"silencedetect=noise={cfg['silence_threshold_db']}dB:d={cfg['silence_min_sec']}",
         "-f", "null", "-",
     ])
     starts, ends = [], []
@@ -96,17 +124,18 @@ def detect_silences(ffmpeg, path):
     return silences
 
 
-def keep_segments(silences, duration):
+def keep_segments(silences, duration, cfg):
     """
     Из пауз собрать отрезки, которые ОСТАВЛЯЕМ.
     Режем только внутреннюю часть паузы: [start+pad, end-pad].
     Возвращает (keep, pauses_cut).
     """
+    pad = cfg["keep_edge_sec"]
     cuts = []
     for s, e in silences:
         end = duration if e is None else e
-        cut_s = s + EDGE_PAD
-        cut_e = end - EDGE_PAD
+        cut_s = s + pad
+        cut_e = end - pad
         if cut_e > cut_s:               # пауза длиннее 2*pad — есть что резать
             cuts.append((cut_s, cut_e))
     cuts.sort()
@@ -167,8 +196,13 @@ def find_denoise_model():
     return None
 
 
-def denoise_filter():
-    """Вернуть (строка_фильтра_или_'', имя). Мягкое подавление."""
+def denoise_filter(cfg):
+    """
+    Вернуть (строка_фильтра, имя) для шумоподавления.
+    denoise off → ('', 'off'). on → arnndn при наличии модели, иначе afftdn. Мягко.
+    """
+    if not cfg["denoise_on"]:
+        return "", "off"
     model = find_denoise_model()
     if model:
         # arnndn — по нейросетевой модели; путь экранируем для filtergraph
@@ -178,13 +212,14 @@ def denoise_filter():
     return "afftdn=nr=10:nf=-25", "afftdn"
 
 
-def loudnorm_measure(ffmpeg, src, pre):
+def loudnorm_measure(ffmpeg, src, pre, cfg):
     """
     Первый проход loudnorm: измерить. pre — фильтры до loudnorm (шумодав или '').
     Возвращает dict с измеренными значениями.
     """
     chain = (pre + "," if pre else "") + (
-        f"loudnorm=I={TARGET_I}:TP={TARGET_TP}:LRA={TARGET_LRA}:print_format=json"
+        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
+        ":print_format=json"
     )
     _, _, err = run([
         ffmpeg, "-hide_banner", "-i", src, "-af", chain, "-f", "null", "-",
@@ -196,13 +231,13 @@ def loudnorm_measure(ffmpeg, src, pre):
     return json.loads(err[start:end + 1])
 
 
-def loudnorm_apply(ffmpeg, src, pre, measured, out):
+def loudnorm_apply(ffmpeg, src, pre, measured, out, cfg):
     """
     Второй проход loudnorm: применить измеренные значения (linear=true).
     Видео копируем как есть, меняем только звук.
     """
     chain = (pre + "," if pre else "") + (
-        f"loudnorm=I={TARGET_I}:TP={TARGET_TP}:LRA={TARGET_LRA}"
+        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
         f":measured_I={measured['input_i']}"
         f":measured_TP={measured['input_tp']}"
         f":measured_LRA={measured['input_lra']}"
@@ -219,9 +254,9 @@ def loudnorm_apply(ffmpeg, src, pre, measured, out):
         raise RuntimeError(f"loudnorm (2-й проход) не удался: {err.strip()[-400:]}")
 
 
-def measure_loudness(ffmpeg, path):
+def measure_loudness(ffmpeg, path, cfg):
     """Измеренная интегральная громкость (LUFS) файла — для отчёта."""
-    m = loudnorm_measure(ffmpeg, path, "")
+    m = loudnorm_measure(ffmpeg, path, "", cfg)
     return round(float(m["input_i"]), 1)
 
 
@@ -253,6 +288,8 @@ def main():
     ap.add_argument("--output", required=True, help="outputs/ready/[id]/clip_audio_clean.mp4")
     args = ap.parse_args()
 
+    cfg = load_config()
+
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
@@ -272,32 +309,32 @@ def main():
 
     # --- измерения ДО ---
     duration_before = ffprobe_duration(ffprobe, args.input)
-    loudness_before = measure_loudness(ffmpeg, args.input)
+    loudness_before = measure_loudness(ffmpeg, args.input, cfg)
 
     # --- шаг 1: паузы ---
-    silences = detect_silences(ffmpeg, args.input)
-    keep, pauses_cut = keep_segments(silences, duration_before)
+    silences = detect_silences(ffmpeg, args.input, cfg)
+    keep, pauses_cut = keep_segments(silences, duration_before, cfg)
     if pauses_cut > 0 and keep:
         base = build_cut(ffmpeg, args.input, keep, work_dir)
         pause_note = f"вырезано пауз: {pauses_cut}"
     else:
-        base = args.input          # пауз нет — режу не трогаю, шаги 2-3 всё равно делаю
+        base = args.input          # пауз нет — исходник не режу, шаги 2-3 всё равно делаю
         pause_note = "пауз не найдено, резка пропущена"
 
-    # --- шаг 2 подготовка: шум ---
-    den_filter, denoise_name = denoise_filter()
+    # --- шаг 2 подготовка: шум (управляется presets/audio.json) ---
+    den_filter, denoise_name = denoise_filter(cfg)
 
-    # --- clean: шум + громкость (2 прохода) ---
-    m_clean = loudnorm_measure(ffmpeg, base, den_filter)
-    loudnorm_apply(ffmpeg, base, den_filter, m_clean, out_clean)
+    # --- clean: (шум) + громкость (2 прохода) ---
+    m_clean = loudnorm_measure(ffmpeg, base, den_filter, cfg)
+    loudnorm_apply(ffmpeg, base, den_filter, m_clean, out_clean, cfg)
 
     # --- nodenoise: только громкость (2 прохода), для сравнения на слух ---
-    m_nd = loudnorm_measure(ffmpeg, base, "")
-    loudnorm_apply(ffmpeg, base, "", m_nd, out_nodenoise)
+    m_nd = loudnorm_measure(ffmpeg, base, "", cfg)
+    loudnorm_apply(ffmpeg, base, "", m_nd, out_nodenoise, cfg)
 
     # --- измерения ПОСЛЕ (по реальному файлу, не из головы) ---
     duration_after = ffprobe_duration(ffprobe, out_clean)
-    loudness_after = measure_loudness(ffmpeg, out_clean)
+    loudness_after = measure_loudness(ffmpeg, out_clean, cfg)
 
     audio = {
         "duration_before": round(duration_before, 2),
@@ -311,14 +348,16 @@ def main():
     wrote = write_pipeline(out_clean, audio)
 
     # --- отчёт цифрами ---
+    same = "  (= clean, шумодав выключен)" if denoise_name == "off" else ""
     print("=== ОТЧЁТ audio_clean ===")
+    print(f"Настройки:     {cfg['_source']}")
     print(f"Длительность:  {audio['duration_before']} с → {audio['duration_after']} с")
     print(f"Паузы:         {pause_note}")
     print(f"Громкость:     {audio['loudness_before']} LUFS → {audio['loudness_after']} LUFS "
-          f"(цель {TARGET_I}, пик ≤ {TARGET_TP} dB)")
+          f"(цель {cfg['target_lufs']}, пик ≤ {cfg['true_peak_db']} dB)")
     print(f"Шумоподавление: {denoise_name}")
     print(f"Файлы:         {out_clean}")
-    print(f"               {out_nodenoise}  (без шумоподавления, для сравнения)")
+    print(f"               {out_nodenoise}{same}")
     print(f"pipeline.json: {'обновлён (current.audio)' if wrote else 'не трогал (нет current с этим id)'}")
     print("audio =", json.dumps(audio, ensure_ascii=False))
     print("=========================")

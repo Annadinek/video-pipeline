@@ -1,0 +1,8 @@
+{
+  "denoise": "on",
+  "silence_threshold_db": -35,
+  "silence_min_sec": 0.45,
+  "keep_edge_sec": 0.12,
+  "target_lufs": -16,
+  "true_peak_db": -1
+}
