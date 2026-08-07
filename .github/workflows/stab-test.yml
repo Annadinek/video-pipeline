@@ -1,0 +1,87 @@
+name: stab-test
+
+# Проверка стабилизации на настоящем видео.
+# Вводишь ссылку YouTube → качается отрезок (по умолчанию 2 минуты) →
+# audio_clean.py → stabilize.py → в логе цифры (тряска до/после, обрезка, звук),
+# в артефактах два файла: до стабилизации и после.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '0:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять (5 минут качаются медленно)'
+        required: false
+        default: '120'
+        type: string
+
+jobs:
+  stab:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим yt-dlp и ffmpeg
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Скачиваем отрезок
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url }}            # через env — без подстановки в shell
+          START: ${{ inputs.start }}
+          SECONDS_ARG: ${{ inputs.seconds }}
+        run: |
+          python scripts/fetch_youtube.py \
+            --url "$URL" \
+            --output outputs/stab/clip.mp4 \
+            --start "$START" --seconds "$SECONDS_ARG"
+
+      - name: Обработка звука (audio_clean.py)
+        run: |
+          python scripts/audio_clean.py \
+            --input outputs/stab/clip.mp4 \
+            --output outputs/stab/clip_audio_clean.mp4
+
+      - name: Стабилизация (stabilize.py)
+        run: |
+          python scripts/stabilize.py \
+            --input outputs/stab/clip_audio_clean.mp4 \
+            --output outputs/stab/clip_stab.mp4 | tee outputs/stab/report.txt
+
+      - name: Проверяем, сохранился ли звук
+        if: always()
+        run: |
+          echo "=== звуковые дорожки ==="
+          echo "до стабилизации (clip_audio_clean.mp4): $(ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 outputs/stab/clip_audio_clean.mp4 || echo НЕТ)"
+          echo "после стабилизации (clip_stab.mp4):     $(ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 outputs/stab/clip_stab.mp4 || echo НЕТ)"
+
+      - name: Отдаём файлы (до и после стабилизации)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stab-test
+          path: |
+            outputs/stab/clip_audio_clean.mp4
+            outputs/stab/clip_stab.mp4
+            outputs/stab/report.txt
+          if-no-files-found: ignore
