@@ -1,6 +1,6 @@
 {
   "denoise": "on",
-  "denoise_strength": "medium",
+  "denoise_strength": "high",
   "pauses": "on",
   "silence_threshold_db": -35,
   "silence_min_sec": 0.45,
