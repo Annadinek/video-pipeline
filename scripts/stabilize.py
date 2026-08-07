@@ -207,8 +207,14 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config()
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
+    # Можно указать отдельный ffmpeg/ffprobe через STAB_FFMPEG/STAB_FFPROBE
+    # (нужно, когда системный ffmpeg не знает vidstab fileformat=ascii, а качать
+    # видео он всё равно должен — тогда для стабилизации берём статический билд).
+    def resolve(name, env):
+        p = os.environ.get(env)
+        return p if (p and os.path.exists(p)) else shutil.which(name)
+    ffmpeg = resolve("ffmpeg", "STAB_FFMPEG")
+    ffprobe = resolve("ffprobe", "STAB_FFPROBE")
     if not ffmpeg or not ffprobe:
         die("нет ffmpeg/ffprobe → blocked", 3)
     if not os.path.exists(args.input):
