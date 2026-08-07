@@ -1,0 +1,7 @@
+{
+  "shakiness": 5,
+  "smoothing": 10,
+  "zoom": 0,
+  "optzoom": 1,
+  "skip_below_px": 3.0
+}
