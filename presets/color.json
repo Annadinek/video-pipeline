@@ -1,0 +1,9 @@
+{
+  "lut": "presets/cinema.cube",
+  "brightness": 0.0,
+  "contrast": 1.03,
+  "saturation": 1.06,
+  "gamma": 1.0,
+  "skin_smooth": "medium",
+  "sharpen": 0.5
+}
