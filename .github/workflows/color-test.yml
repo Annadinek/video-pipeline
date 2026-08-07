@@ -1,0 +1,75 @@
+name: color-test
+
+# Проверка цвета и сглаживания лица на настоящем видео (1080p).
+# Ссылка YouTube → качается отрезок (по умолчанию 2 минуты из середины) →
+# color.py → в логе цифры (разрешение, яркость, насыщенность, уровень сглаживания),
+# в артефактах два файла: до и после.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '7:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять'
+        required: false
+        default: '120'
+        type: string
+
+jobs:
+  color:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим yt-dlp, ffmpeg и OpenCV
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs "opencv-python-headless<5" numpy
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Скачиваем отрезок (1080p)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url }}            # через env — без подстановки в shell
+          START: ${{ inputs.start }}
+          SECONDS_ARG: ${{ inputs.seconds }}
+        run: |
+          python scripts/fetch_youtube.py \
+            --url "$URL" \
+            --output outputs/color/clip.mp4 \
+            --start "$START" --seconds "$SECONDS_ARG"
+
+      - name: Цвет и сглаживание (color.py)
+        run: |
+          set -o pipefail   # чтобы падение python не пряталось за tee
+          python scripts/color.py \
+            --input outputs/color/clip.mp4 \
+            --output outputs/color/clip_color.mp4 | tee outputs/color/report.txt
+
+      - name: Отдаём файлы (до и после)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: color-test
+          path: |
+            outputs/color/clip.mp4
+            outputs/color/clip_color.mp4
+            outputs/color/report.txt
+          if-no-files-found: ignore
