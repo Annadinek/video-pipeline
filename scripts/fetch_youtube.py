@@ -10,7 +10,7 @@ fetch_youtube.py — скачать отрезок видео с YouTube чер�
     (печатаем только размер, число строк и похоже ли на формат Netscape).
 
 Скачивание:
-  - запасной выбор качества: bv*[height<=720]+ba / b[height<=720] / bv*+ba / b —
+  - запасной выбор качества: bv*[height<=1080]+ba / b[height<=1080] / bv*+ba / b —
     по очереди, не падаем на первом отказе;
   - --remote-components ejs:github — чтобы yt-dlp дотягивал скрипты решателя EJS,
     если их не хватает (n-challenge). JS-движок (Deno) ставится в workflow.
@@ -53,7 +53,7 @@ DRM_PATTERNS = ["drm protected", "drm-protected"]
 TAIL_LINES = 40
 
 # Запасной выбор качества: пробуем по очереди, не падаем на первом отказе.
-FORMAT_FALLBACK = "bv*[height<=720]+ba/b[height<=720]/bv*+ba/b"
+FORMAT_FALLBACK = "bv*[height<=1080]+ba/b[height<=1080]/bv*+ba/b"
 # EJS: разрешаем дотягивать скрипты решателя с github, если не хватает своих.
 REMOTE_COMPONENTS = "ejs:github"
 
