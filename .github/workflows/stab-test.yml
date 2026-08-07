@@ -38,11 +38,18 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh -s -- -y
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: Ставим yt-dlp и ffmpeg
+      - name: Ставим yt-dlp и статический ffmpeg (vidstab + fileformat)
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
-          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          # ffmpeg с раннера не знает vidstabdetect:fileformat=ascii — ставим полный статик-билд
+          curl -fsSL -o /tmp/ff.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          mkdir -p /tmp/ff && tar xf /tmp/ff.tar.xz -C /tmp/ff --strip-components=1
+          sudo install /tmp/ff/ffmpeg /tmp/ff/ffprobe /usr/local/bin/
+          hash -r
+          ffmpeg -version | head -1
+          ffmpeg -hide_banner -h filter=vidstabdetect 2>/dev/null | grep -i fileformat \
+            && echo "fileformat: поддерживается" || echo "fileformat: НЕ поддерживается"
 
       - name: Скачиваем отрезок
         env:
@@ -64,6 +71,7 @@ jobs:
 
       - name: Стабилизация (stabilize.py)
         run: |
+          set -o pipefail   # чтобы падение python не пряталось за tee
           python scripts/stabilize.py \
             --input outputs/stab/clip_audio_clean.mp4 \
             --output outputs/stab/clip_stab.mp4 | tee outputs/stab/report.txt
