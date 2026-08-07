@@ -91,21 +91,30 @@ def render(ffmpeg, src, pre, out):
 
 
 def find_pauses(ffmpeg, src):
-    """Где в исходнике паузы — по ним будем мерить фон."""
-    _, _, err = run([ffmpeg, "-hide_banner", "-i", src,
-                     "-af", "silencedetect=noise=-35dB:d=0.45", "-f", "null", "-"])
-    pauses, start = [], None
-    for line in err.splitlines():
-        m = re.search(r"silence_start:\s*([-\d.]+)", line)
-        if m:
-            start = float(m.group(1))
-        m = re.search(r"silence_end:\s*([-\d.]+)", line)
-        if m and start is not None:
-            end = float(m.group(1))
-            if end - start > 0.4:
-                pauses.append((start + 0.15, end - 0.15))
-            start = None
-    return pauses[:MAX_PAUSES]
+    """
+    Где в исходнике паузы — по ним меряем фон.
+
+    Порог подбираем сам: если в комнате шумно, при -35 дБ пауз может не быть
+    вообще (фон громче порога). Тогда пробуем пороги мягче, пока паузы
+    не найдутся. Возвращаем список пауз и порог, на котором они нашлись.
+    """
+    for noise_db in (-35, -30, -25, -20):
+        _, _, err = run([ffmpeg, "-hide_banner", "-i", src,
+                         "-af", f"silencedetect=noise={noise_db}dB:d=0.45", "-f", "null", "-"])
+        pauses, start = [], None
+        for line in err.splitlines():
+            m = re.search(r"silence_start:\s*([-\d.]+)", line)
+            if m:
+                start = float(m.group(1))
+            m = re.search(r"silence_end:\s*([-\d.]+)", line)
+            if m and start is not None:
+                end = float(m.group(1))
+                if end - start > 0.4:
+                    pauses.append((start + 0.15, end - 0.15))
+                start = None
+        if len(pauses) >= 3:
+            return pauses[:MAX_PAUSES], noise_db
+    return [], None
 
 
 def rms_db(ffmpeg, path, start, dur, pre=""):
@@ -152,9 +161,13 @@ def main():
         sys.exit(f"Нет файла: {args.input}")
     os.makedirs(args.outdir, exist_ok=True)
 
-    pauses = find_pauses(ffmpeg, args.input)
+    pauses, noise_db = find_pauses(ffmpeg, args.input)
     print(f"Файл:   {args.input}")
-    print(f"Пауз для замера фона: {len(pauses)}")
+    if pauses:
+        print(f"Пауз для замера фона: {len(pauses)} (порог тишины {noise_db} дБ)")
+    else:
+        print("Пауз не нашлось даже на мягком пороге — фон в паузах померить нечем. "
+              "Скорее всего, речь идёт без перерывов или под музыку.")
 
     src = ln_measure(ffmpeg, args.input)
     rows = {"исходник": {
