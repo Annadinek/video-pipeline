@@ -38,10 +38,10 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh -s -- -y
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: Ставим yt-dlp и ffmpeg
+      - name: Ставим yt-dlp, ffmpeg и OpenCV
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs "opencv-python-headless<5" numpy
           ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
       - name: Скачиваем отрезок (1080p)

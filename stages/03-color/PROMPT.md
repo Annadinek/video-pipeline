@@ -7,23 +7,23 @@
 
 ## ЧТО ДЕЛАЮ
 Запускаю `scripts/color.py`:
-1. Цвет. Есть LUT `presets/cinema.cube` — крашу по нему (lut3d). Пресета нет —
-   базовая коррекция eq (контраст/яркость/насыщенность/гамма из color.json).
-2. Сглаживание кожи. bilateral сглаживает по яркости, сохраняя края (глаза,
-   волосы, контур не мылит). Уровень off/low/medium/high.
-3. Резкость. Лёгкий unsharp после сглаживания — кожа мягкая, детали чёткие.
-Разрешение и звук не меняю (-c:a copy). Работаю на 1080p.
+1. Измеряю СОДЕРЖИМОЕ кадра через ffmpeg signalstats (не заголовок файла):
+   средняя яркость и разброс тонов, насыщенность, пересветы и провалы в тенях.
+2. Цвет. Есть LUT `presets/cinema.cube` — крашу по нему (lut3d). Нет — коррекция eq;
+   в авто-режиме параметры eq ПОДБИРАЮТСЯ от измерений (тёмный → ярче, плоский →
+   контраст, тускло → насыщенность; при пересветах/провалах клиппинг не усиливаю).
+3. Сглаживание кожи — OpenCV: Haar-каскад находит лицо, по YCrCb строю маску кожи
+   ВНУТРИ лица, bilateralFilter сглаживает только кожу. Глаза, брови, волосы, фон
+   не трогаю. Уровень off/low/medium/high.
+4. Лёгкая резкость unsharp. Разрешение и звук не меняю.
 
 ## ЧТО ОТДАЮ
 - outputs/ready/[id]/clip_color.mp4
-- запись в state/pipeline.json:
-  - color.resolution_before / color.resolution_after
-  - color.brightness_before / color.brightness_after
-  - color.saturation_before / color.saturation_after
-  - color.color (LUT или eq)
-  - color.skin_smooth
-  - color.sharpen
+- запись в state/pipeline.json (color.*):
+  - resolution_before / resolution_after
+  - before / after (яркость, разброс тонов, насыщенность, пересветы%, провалы%)
+  - color (LUT или подобранный eq), skin_smooth, faces_pct, sharpen
 
 ## КОГДА СТОП
-- нет ffmpeg → blocked
+- нет ffmpeg или OpenCV → blocked
 - две неудачные попытки → blocked, отчёт, идти дальше
