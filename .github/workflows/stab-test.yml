@@ -38,11 +38,23 @@ jobs:
           curl -fsSL https://deno.land/install.sh | sh -s -- -y
           echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
 
-      - name: Ставим yt-dlp и ffmpeg
+      # ffmpeg раннера (apt) — им yt-dlp качает отрезок и работает audio_clean.
+      # Статический ffmpeg ломает закачку m3u8, поэтому его НЕ ставим в PATH.
+      - name: Ставим yt-dlp и ffmpeg (для скачивания и звука)
         run: |
           python -m pip install --upgrade pip
           python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
           ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      # Отдельный статический ffmpeg ТОЛЬКО для стабилизации (знает vidstab fileformat=ascii).
+      # Кладём в $HOME/ffstatic, в PATH не добавляем — чтобы yt-dlp пользовался apt-ffmpeg.
+      - name: Ставим статический ffmpeg для стабилизации
+        run: |
+          curl -fsSL -o /tmp/ff.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          mkdir -p "$HOME/ffstatic"
+          tar xf /tmp/ff.tar.xz -C "$HOME/ffstatic" --strip-components=1
+          "$HOME/ffstatic/ffmpeg" -hide_banner -h filter=vidstabdetect 2>/dev/null | grep -i fileformat \
+            && echo "vidstab fileformat: поддерживается" || echo "vidstab fileformat: НЕ поддерживается"
 
       - name: Скачиваем отрезок
         env:
@@ -64,6 +76,9 @@ jobs:
 
       - name: Стабилизация (stabilize.py)
         run: |
+          set -o pipefail   # чтобы падение python не пряталось за tee
+          export STAB_FFMPEG="$HOME/ffstatic/ffmpeg"     # статик — только для vidstab
+          export STAB_FFPROBE="$HOME/ffstatic/ffprobe"
           python scripts/stabilize.py \
             --input outputs/stab/clip_audio_clean.mp4 \
             --output outputs/stab/clip_stab.mp4 | tee outputs/stab/report.txt

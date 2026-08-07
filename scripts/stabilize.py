@@ -101,15 +101,23 @@ def ffprobe_dims(ffprobe, path):
 
 
 def vidstab_detect(ffmpeg, src, trf, shakiness):
-    """Проход 1: замер движения, пишет .trf в текстовом (ascii) формате для разбора."""
+    """
+    Проход 1: замер движения, пишет .trf.
+    Пробуем текстовый формат (fileformat=ascii) — он нужен для разбора тряски.
+    Если сборка ffmpeg не знает эту опцию — откатываемся на формат по умолчанию
+    (у старых сборок он и так текстовый; у новых — бинарный, тогда тряску не измерим).
+    """
     safe = trf.replace("\\", "/")
-    rc, _, err = run([
-        ffmpeg, "-y", "-hide_banner", "-i", src,
-        "-vf", f"vidstabdetect=shakiness={shakiness}:fileformat=ascii:result={safe}",
-        "-f", "null", "-",
-    ])
-    if rc != 0 or not os.path.exists(trf):
-        raise RuntimeError(f"vidstabdetect не удался: {err.strip()[-300:]}")
+    base = f"vidstabdetect=shakiness={shakiness}:result={safe}"
+    last_err = ""
+    for vf in (base.replace("result=", "fileformat=ascii:result="), base):
+        rc, _, err = run([
+            ffmpeg, "-y", "-hide_banner", "-i", src, "-vf", vf, "-f", "null", "-",
+        ])
+        if rc == 0 and os.path.exists(trf):
+            return
+        last_err = err
+    raise RuntimeError(f"vidstabdetect не удался: {last_err.strip()[-300:]}")
 
 
 def parse_trf_motion(trf_path):
@@ -132,7 +140,7 @@ def parse_trf_motion(trf_path):
             mdx, mdy = statistics.median(dxs), statistics.median(dys)
             mags.append((mdx * mdx + mdy * mdy) ** 0.5)
     if not mags:
-        return 0.0
+        return None   # .trf не в текстовом формате (бинарный) — тряску не измерить
     return sum(mags) / len(mags)
 
 
@@ -168,7 +176,8 @@ def measure_shake(ffmpeg, src, work_dir, cfg, tag):
     """
     trf = os.path.join(work_dir, f"detect_{tag}.trf")
     vidstab_detect(ffmpeg, src, trf, cfg["shakiness"])
-    return round(parse_trf_motion(trf), 1), trf
+    px = parse_trf_motion(trf)
+    return (round(px, 1) if px is not None else None), trf
 
 
 def write_pipeline(out_path, stab):
@@ -198,8 +207,14 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config()
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
+    # Можно указать отдельный ffmpeg/ffprobe через STAB_FFMPEG/STAB_FFPROBE
+    # (нужно, когда системный ffmpeg не знает vidstab fileformat=ascii, а качать
+    # видео он всё равно должен — тогда для стабилизации берём статический билд).
+    def resolve(name, env):
+        p = os.environ.get(env)
+        return p if (p and os.path.exists(p)) else shutil.which(name)
+    ffmpeg = resolve("ffmpeg", "STAB_FFMPEG")
+    ffprobe = resolve("ffprobe", "STAB_FFPROBE")
     if not ffmpeg or not ffprobe:
         die("нет ffmpeg/ffprobe → blocked", 3)
     if not os.path.exists(args.input):
@@ -212,14 +227,18 @@ def main():
 
     w, h, rate = ffprobe_dims(ffprobe, args.input)
 
-    def as_pct(px):
-        return round(px / h * 100, 2) if h else 0.0
+    def fmt(px):
+        """px + % высоты, либо 'н/д', если измерить не удалось."""
+        if px is None:
+            return "н/д"
+        pct = round(px / h * 100, 2) if h else 0.0
+        return f"{px} px ({pct}% высоты)"
 
-    # --- шаг 1: измеряем тряску (px) ---
+    # --- шаг 1: измеряем тряску (px; None = сборка ffmpeg не отдала текстовый .trf) ---
     shake_before, trf_in = measure_shake(ffmpeg, args.input, work_dir, cfg, "before")
 
     threshold = float(cfg["skip_below_px"])
-    if shake_before < threshold:
+    if shake_before is not None and shake_before < threshold:
         # камера почти не двигалась — не портим картинку лишней пересборкой
         shutil.copyfile(args.input, args.output)
         stab = {
@@ -233,8 +252,7 @@ def main():
         print("=== ОТЧЁТ stabilize ===")
         print(f"Конфиг:       {cfg['_config_status']}")
         print(f"Кадр:         {w}x{h} @ {rate}")
-        print(f"Тряска:       {shake_before} px ({as_pct(shake_before)}% высоты) "
-              f"< порог {threshold} px → ТРЯСКИ НЕТ")
+        print(f"Тряска:       {fmt(shake_before)} < порог {threshold} px → ТРЯСКИ НЕТ")
         print("Этап пропущен: файл скопирован без пересборки, картинка не тронута.")
         print("Обрезка:      0% (стабилизация не применялась)")
         print(f"Файл:         {args.output}")
@@ -256,15 +274,14 @@ def main():
         "shake_after": shake_after,
         "crop_percent": crop_percent,
         "applied": True,
-        "note": "стабилизировано",
+        "note": "стабилизировано" if shake_before is not None else "стабилизировано (тряска не измерена)",
     }
     write_pipeline(args.output, stab)
 
     print("=== ОТЧЁТ stabilize ===")
     print(f"Конфиг:       {cfg['_config_status']}")
     print(f"Кадр:         {w}x{h} @ {rate}")
-    print(f"Тряска:       {shake_before} px → {shake_after} px "
-          f"({as_pct(shake_before)}% → {as_pct(shake_after)}% высоты; меньше = стабильнее)")
+    print(f"Тряска:       {fmt(shake_before)} → {fmt(shake_after)}  (меньше = стабильнее)")
     print(f"Обрезка:      {crop_percent}% кадра съедено (зум внутрь по каждой стороне)")
     print(f"Настройки:    shakiness={cfg['shakiness']}, smoothing={cfg['smoothing']}, "
           f"zoom={cfg['zoom']}, optzoom={cfg['optzoom']}")
