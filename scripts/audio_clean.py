@@ -11,7 +11,8 @@ audio_clean.py — обработка звука ролика.
   1) highpass=f=80  — обрезка низов (уличный гул) ДО шумодава
   2) afftdn         — шумоподавление (уровень low/medium/high или off)
   3) compand        — компрессия
-  4) loudnorm       — целевая громкость (2 прохода)
+  4) alimiter       — потолок пика, чтобы loudnorm не сжимал звук второй раз
+  5) loudnorm       — целевая громкость (2 прохода)
 Резка пауз — ПОСЛЕ всех фильтров, чтобы метки времени не сбились.
 
 Настройки — presets/audio.json (сломан/нет файла → умолчания, не падаем):
@@ -56,12 +57,19 @@ LOUDNORM_LRA = 11  # целевой разброс громкости для lou
 
 # Порядок и значения фиксированы заданием.
 HIGHPASS = "highpass=f=80"
-COMPAND = "compand=attacks=0.02:decays=0.3:points=-70/-70|-30/-18|-15/-10|0/-5:gain=0"
+# Тихое поднимаем умеренно (+8 дБ на уровне -30, а не +12): сильный подъём
+# сплющивал разброс громкости и делал голос плоским.
+COMPAND = "compand=attacks=0.02:decays=0.3:points=-70/-70|-30/-22|-15/-11|0/-5:gain=0"
+# Потолок пика -3 dBFS. level=disabled — лимитер не подтягивает громкость обратно,
+# иначе запас по пику пропадает и loudnorm снова уходит в динамический режим.
+LIMITER = "alimiter=limit=0.7:level=disabled"
 # afftdn от мягкого к сильному. Отправная точка; уточняется по режиму сравнения.
+# У high nr=16:nf=-25 вместо nr=24:nf=-20 — фон тише, чем на medium,
+# а верхние частоты голоса (4-8 кГц) почти не страдают.
 STRENGTH = {
     "low":    "afftdn=nr=6:nf=-30",
     "medium": "afftdn=nr=12:nf=-25",
-    "high":   "afftdn=nr=24:nf=-20",
+    "high":   "afftdn=nr=16:nf=-25",
 }
 COMPARE_LEVELS = ["off", "low", "medium", "high"]
 COMPARE_NAMES = {"off": "nodenoise", "low": "low", "medium": "medium", "high": "high"}
@@ -110,11 +118,12 @@ def denoise_level(cfg):
 
 
 def build_pre(level):
-    """Цепочка фильтров ДО loudnorm в строгом порядке: highpass[,afftdn],compand."""
+    """Цепочка ДО loudnorm в строгом порядке: highpass[,afftdn],compand,alimiter."""
     parts = [HIGHPASS]
     if level != "off":
         parts.append(STRENGTH[level])
     parts.append(COMPAND)
+    parts.append(LIMITER)
     return ",".join(parts)
 
 
@@ -340,7 +349,7 @@ def run_normal(ffmpeg, ffprobe, args, cfg, work_dir):
 
     print("=== ОТЧЁТ audio_clean ===")
     print(f"Конфиг:        {cfg['_config_status']}")
-    print(f"Порядок:       highpass=80 → afftdn({level}) → compand → loudnorm, паузы последними")
+    print(f"Порядок:       highpass=80 → afftdn({level}) → compand → лимитер → loudnorm, паузы последними")
     print(f"Длительность:  {round(dur_before,2)} с → {round(dur_after,2)} с "
           f"(вырезано пауз: {pauses_cut})")
     print(f"Громкость:     {i0} → {i1} LUFS   (цель {cfg['target_lufs']})")
@@ -348,6 +357,7 @@ def run_normal(ffmpeg, ffprobe, args, cfg, work_dir):
     print(f"Разброс LRA:   {lra0} → {lra1} LU")
     print(f"Шумодав:       {level}" + (f"  ({STRENGTH[level]})" if level != 'off' else ""))
     print(f"Компрессия:    {COMPAND}")
+    print(f"Лимитер:       {LIMITER}")
     print(f"Файлы:         {out_clean}")
     print(f"               {out_nodenoise}  (без шумодава, для сравнения)")
     print(f"pipeline.json: {'обновлён (current.audio)' if wrote else 'не трогал (нет current с этим id)'}")
@@ -366,9 +376,10 @@ def run_compare(ffmpeg, ffprobe, args, cfg, work_dir):
 
     print("=== РЕЖИМ СРАВНЕНИЯ audio_clean ===")
     print(f"Конфиг:        {cfg['_config_status']}")
-    print(f"Порядок:       highpass=80 → afftdn(<уровень>) → compand → loudnorm, паузы последними")
+    print(f"Порядок:       highpass=80 → afftdn(<уровень>) → compand → лимитер → loudnorm, паузы последними")
     print(f"Отрезок:       {round(start,1)}–{round(start+dur,1)} с (самый громкий = речь), {round(dur,1)} с")
     print(f"Компрессия:    {COMPAND}")
+    print(f"Лимитер:       {LIMITER}")
     print(f"До обработки:  {i0} LUFS, пик {tp0} dBTP, LRA {lra0} LU")
     print(f"Цель:          {cfg['target_lufs']} LUFS, пик ≤ {cfg['true_peak_db']} dBTP")
     print("-" * 64)
