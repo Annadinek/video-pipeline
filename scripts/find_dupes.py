@@ -14,25 +14,29 @@ find_dupes.py — поиск дублей (запнулась → повтори
      распознавать второй раз не будем:
        outputs/ready/[id]/transcript.srt  (с метками времени)
        outputs/ready/[id]/transcript.txt  (сплошным текстом)
-  3. Ищет дубли: соседние куски с похожим текстом.
+  3. Ищет дубли.
   4. ПОКА НЕ РЕЖЕТ. Только печатает и сохраняет список найденного:
        outputs/ready/[id]/dupes.json         (для машины)
        outputs/ready/[id]/dupes_report.txt   (для человека)
 
-КАК ОТЛИЧАЕМ ДУБЛЬ ОТ РИТОРИЧЕСКОГО ПРИЁМА (важно!):
-  Дубль   — повторяется ОДНА И ТА ЖЕ фраза целиком, подряд, с коротким разрывом.
-  Приём   — повторяется только НАЧАЛО, а концовка расходится
-            («снова те же мысли» / «снова те же люди»).
-  Поэтому:
-   - сравниваем фразу ЦЕЛИКОМ (расстояние Левенштейна по всей строке), не начало;
-   - дополнительно требуем, чтобы СОВПАДАЛИ КОНЦОВКИ (последнее слово).
-     У приёма концовки разные — он отсеивается.
-   - сомневаемся → НЕ считаем дублем. Лучше пропустить, чем вырезать живое.
-     Плюс ничего не режем — список смотрит человек.
+КАК НАХОДИМ ДУБЛЬ (метод — по словам, без процентов):
+  Дубль — это когда фраза сказана ДВАЖДЫ ПОДРЯД, слово в слово.
+  Значит ищем повтор, который:
+   - идёт ПОДРЯД (между двумя версиями 0 слов — после чистки от паразитов);
+   - совпадает СЛОВО В СЛОВО (не процент похожести);
+   - длиной не меньше prefix_words слов (по умолчанию 4).
+  Почему так, а не проценты: на коротких фразах процент обманывает — в трёх
+  словах одно отличие сразу даёт треть. И меряем в СЛОВАХ, не в секундах
+  (скорость речи гуляет) и не в символах (длинные слова врут).
+
+  Риторический приём («в каждом вдохе есть смысл, в каждом взгляде есть смысл»)
+  так НЕ ловится: между повторами стоит отличающееся слово (вдохе/взгляде),
+  значит «подряд, слово в слово» не выполняется. Что и требуется:
+  лучше пропустить, чем вырезать живое. Плюс ничего не режем — список смотрит человек.
 
 Настройки — presets/dupes.json (сломан/нет файла → умолчания, не падаем).
-Сравнение: нижний регистр, без пунктуации, без слов-паразитов (ну, это, вот,
-как бы, значит), затем расстояние Левенштейна. Лемматизации нет — намеренно.
+Перед сравнением чистим: нижний регистр, ё→е, без пунктуации, без слов-паразитов
+(ну, это, вот, как бы, значит). Лемматизации нет — намеренно.
 """
 
 import argparse
@@ -52,13 +56,11 @@ DEFAULTS = {
     "compute_type": "int8",      # int8 — мало памяти, годится для GitHub Actions
     "language": "ru",
     "vad_filter": True,          # режет тишину/паузы — точнее границы кусков
-    "similarity_threshold": 0.75,  # совпадение текста от 75%
-    "max_gap_sec": 1.5,          # разрыв между повторами не больше 1.5 с
-    "min_words": 3,              # кусок короче 3 слов не считаем
-    "end_word_ratio": 0.8,       # насколько должны совпасть КОНЦОВКИ (последнее слово)
+    "prefix_words": 4,           # минимум слов в повторе; фраза короче не считается
     "fillers": ["как бы", "ну", "это", "вот", "значит"],
 }
 BEAM_SIZE = 5
+MAX_RUN = 40  # верхний предел длины повтора (слов) — защита от долгого поиска
 
 
 def die(msg, code):
@@ -91,11 +93,15 @@ def load_config():
             status = "битый файл, взял умолчания"
     if not isinstance(cfg.get("fillers"), list):
         cfg["fillers"] = list(DEFAULTS["fillers"])
+    try:
+        cfg["prefix_words"] = max(1, int(cfg["prefix_words"]))
+    except (TypeError, ValueError):
+        cfg["prefix_words"] = DEFAULTS["prefix_words"]
     cfg["_config_status"] = status
     return cfg
 
 
-# --- нормализация и сравнение текста ---
+# --- нормализация текста ---
 def normalize(text, fillers):
     """Нижний регистр, ё→е, без пунктуации, без слов-паразитов, схлопнуть пробелы."""
     t = text.lower().replace("ё", "е")
@@ -107,32 +113,6 @@ def normalize(text, fillers):
             continue
         t = re.sub(rf"\b{re.escape(f_norm)}\b", " ", t)
     return re.sub(r"\s+", " ", t).strip()
-
-
-def levenshtein(a, b):
-    if a == b:
-        return 0
-    la, lb = len(a), len(b)
-    if la == 0:
-        return lb
-    if lb == 0:
-        return la
-    prev = list(range(lb + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i] + [0] * lb
-        for j, cb in enumerate(b, 1):
-            cost = 0 if ca == cb else 1
-            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-        prev = cur
-    return prev[lb]
-
-
-def ratio(a, b):
-    """Похожесть 0..1 по расстоянию Левенштейна (по символам)."""
-    if not a and not b:
-        return 1.0
-    m = max(len(a), len(b))
-    return 1.0 - levenshtein(a, b) / m if m else 1.0
 
 
 # --- время ---
@@ -198,58 +178,65 @@ def write_txt(segs, path):
 
 
 # --- поиск дублей ---
+def build_tokens(segs, fillers):
+    """
+    Один поток слов по всему ролику (после чистки), с временем каждого слова.
+    Так дубль ловится одинаково и внутри куска, и на стыке двух кусков —
+    важно, что слова идут ПОДРЯД, а не в каком куске они оказались.
+    """
+    tokens = []
+    for si, s in enumerate(segs):
+        words = normalize(s["text"], fillers).split()
+        w = len(words)
+        span = max(s["end"] - s["start"], 0.0)
+        for k, word in enumerate(words):
+            # ровно распределяем слова по времени куска (метки на слово нет)
+            t = s["start"] + (k + 0.5) / w * span if w else s["start"]
+            tokens.append({"w": word, "seg": si, "t": t, "seg_text": s["text"]})
+    return tokens
+
+
 def find_dupes(segs, cfg):
     """
-    Соседние куски с похожим текстом. Условия дубля:
-      - разрыв между ними ≤ max_gap_sec;
-      - в каждом ≥ min_words слов (после чистки);
-      - похожесть всей фразы ≥ similarity_threshold;
-      - КОНЦОВКИ совпадают (последнее слово) ≥ end_word_ratio — иначе это приём.
-    Пустые/паразитные куски прозрачны для соседства, но их время входит в разрыв.
+    Дубль = фраза, сказанная дважды ПОДРЯД, слово в слово, длиной ≥ prefix_words.
+    Ищем в потоке слов позицию p, где words[p-L:p] == words[p:p+L] (повтор впритык),
+    берём максимальную L; если L ≥ prefix_words — это дубль.
     """
-    fillers = cfg["fillers"]
-    thr = float(cfg["similarity_threshold"])
-    max_gap = float(cfg["max_gap_sec"])
-    min_words = int(cfg["min_words"])
-    end_ratio = float(cfg["end_word_ratio"])
-
-    for s in segs:
-        s["norm"] = normalize(s["text"], fillers)
-        s["words"] = s["norm"].split()
+    need = int(cfg["prefix_words"])
+    tokens = build_tokens(segs, cfg["fillers"])
+    W = [t["w"] for t in tokens]
+    n = len(W)
 
     dupes = []
-    n = len(segs)
-    i = 0
-    while i < n - 1:
-        a = segs[i]
-        if len(a["words"]) < min_words:
-            i += 1
-            continue
-        # ближайший непустой сосед (паразитные куски пропускаем)
-        j = i + 1
-        while j < n and len(segs[j]["words"]) == 0:
-            j += 1
-        if j >= n:
-            break
-        b = segs[j]
-        gap = round(b["start"] - a["end"], 2)
-        matched = False
-        if len(b["words"]) >= min_words and gap <= max_gap:
-            sim = ratio(a["norm"], b["norm"])
-            end_sim = ratio(a["words"][-1], b["words"][-1])
-            if sim >= thr and end_sim >= end_ratio:
-                dupes.append({
-                    "index": len(dupes) + 1,
-                    "start": round(a["start"], 2),
-                    "end": round(b["end"], 2),
-                    "gap": gap,
-                    "similarity": round(sim, 3),
-                    "end_similarity": round(end_sim, 3),
-                    "text_1": a["text"], "text_2": b["text"],
-                    "norm_1": a["norm"], "norm_2": b["norm"],
-                })
-                matched = True
-        i = j if matched else i + 1
+    p = 1
+    while p < n:
+        cap = min(MAX_RUN, p, n - p)
+        found_L = 0
+        for L in range(cap, need - 1, -1):
+            if W[p - L:p] == W[p:p + L]:
+                found_L = L
+                break
+        if found_L:
+            L = found_L
+            first = tokens[p - L:p]
+            second = tokens[p:p + L]
+            phrase = " ".join(W[p:p + L])
+            seg_texts = []
+            for tk in first + second:
+                if tk["seg_text"] not in seg_texts:
+                    seg_texts.append(tk["seg_text"])
+            dupes.append({
+                "index": len(dupes) + 1,
+                "words": L,
+                "phrase": phrase,
+                "first_start": round(first[0]["t"], 2),
+                "second_start": round(second[0]["t"], 2),
+                "second_end": round(second[-1]["t"], 2),
+                "context": seg_texts,
+            })
+            p += L  # перешагнуть вторую версию, чтобы не ловить сдвиги
+        else:
+            p += 1
     return dupes
 
 
@@ -264,20 +251,19 @@ def build_report(input_path, srt_path, txt_path, segs, dupes, cfg, duration):
     L.append(f"Расшифровка:  {os.path.basename(srt_path)} + {os.path.basename(txt_path)} "
              "(переиспользуем для субтитров)")
     L.append(f"Длительность: {fmt_mmss(duration)} мин, кусков распознано: {len(segs)}")
-    L.append(f"Пороги:       похожесть ≥{int(cfg['similarity_threshold']*100)}%, "
-             f"разрыв ≤{cfg['max_gap_sec']} с, минимум {cfg['min_words']} слова, "
-             f"концовки совпадают ≥{int(cfg['end_word_ratio']*100)}%")
+    L.append(f"Правило:      фраза сказана дважды ПОДРЯД, слово в слово, "
+             f"минимум {cfg['prefix_words']} слова (меряем в словах)")
     L.append(f"Найдено дублей: {len(dupes)}")
     L.append("")
     if not dupes:
-        L.append("Дублей не нашёл. Либо их нет, либо повторы не дотянули до порогов")
-        L.append("(тогда ослабь similarity_threshold или увеличь max_gap_sec в presets/dupes.json).")
+        L.append("Дублей не нашёл. Значит фраз, сказанных дважды подряд слово в слово, нет")
+        L.append(f"(если повтор короче {cfg['prefix_words']} слов — не считаю; поменяй prefix_words в presets/dupes.json).")
     for d in dupes:
-        L.append(f"[{d['index']}] {fmt_mmss(d['start'])} – {fmt_mmss(d['end'])}   "
-                 f"(похожесть {int(d['similarity']*100)}%, концовки {int(d['end_similarity']*100)}%, "
-                 f"разрыв {d['gap']} с)")
-        L.append(f"    1-я: «{d['text_1']}»")
-        L.append(f"    2-я: «{d['text_2']}»")
+        L.append(f"[{d['index']}] {fmt_mmss(d['first_start'])} – {fmt_mmss(d['second_end'])}   "
+                 f"(повтор {d['words']} слов подряд)")
+        L.append(f"    повтор: «{d['phrase']}» — сказано дважды подряд")
+        for ctx in d["context"]:
+            L.append(f"    в речи: «{ctx}»")
         L.append("")
     L.append("Ничего не вырезано. Посмотри список и скажи, где я не прав —")
     L.append("режем только после твоей проверки.")
@@ -345,10 +331,7 @@ def main():
         "input": args.input,
         "model": cfg["model"],
         "settings": {
-            "similarity_threshold": cfg["similarity_threshold"],
-            "max_gap_sec": cfg["max_gap_sec"],
-            "min_words": cfg["min_words"],
-            "end_word_ratio": cfg["end_word_ratio"],
+            "prefix_words": cfg["prefix_words"],
             "fillers": cfg["fillers"],
         },
         "duration_sec": round(duration, 2),
