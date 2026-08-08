@@ -5,8 +5,6 @@
 name: vizard-youtube
 
 on:
-  schedule:
-    - cron: '0 7 * * *'   # 10:00 по мск (UTC+3) — ежедневная партия
   workflow_dispatch:
     inputs:
       video:
