@@ -1,0 +1,76 @@
+name: dupes-test
+
+# Проверка поиска дублей на настоящем видео.
+# Ссылка YouTube → качается отрезок (по умолчанию 2 минуты из середины) →
+# find_dupes.py → в логе список дублей (время, обе версии, похожесть),
+# в артефактах: transcript.srt, transcript.txt, dupes.json, dupes_report.txt.
+# Скачивание — ТОЛЬКО для теста; в конвейере find_dupes.py берёт готовый clip.mp4.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '7:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять'
+        required: false
+        default: '120'
+        type: string
+
+jobs:
+  dupes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим yt-dlp, ffmpeg и Whisper
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs faster-whisper
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Скачиваем отрезок (только для теста)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url }}            # через env — без подстановки в shell
+          START: ${{ inputs.start }}
+          SECONDS_ARG: ${{ inputs.seconds }}
+        run: |
+          python scripts/fetch_youtube.py \
+            --url "$URL" \
+            --output outputs/ready/dupes-test/clip.mp4 \
+            --start "$START" --seconds "$SECONDS_ARG"
+
+      - name: Поиск дублей (find_dupes.py)
+        run: |
+          set -o pipefail   # чтобы падение python не пряталось за tee
+          python scripts/find_dupes.py \
+            --input outputs/ready/dupes-test/clip.mp4 | tee outputs/ready/dupes-test/console.txt
+
+      - name: Отдаём расшифровку и список дублей
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dupes-test
+          path: |
+            outputs/ready/dupes-test/transcript.srt
+            outputs/ready/dupes-test/transcript.txt
+            outputs/ready/dupes-test/dupes.json
+            outputs/ready/dupes-test/dupes_report.txt
+          if-no-files-found: ignore
