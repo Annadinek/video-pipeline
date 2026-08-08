@@ -3,9 +3,6 @@
   "compute_type": "int8",
   "language": "ru",
   "vad_filter": true,
-  "similarity_threshold": 0.75,
-  "max_gap_sec": 1.5,
-  "min_words": 3,
-  "end_word_ratio": 0.8,
+  "prefix_words": 3,
   "fillers": ["как бы", "ну", "это", "вот", "значит"]
 }
