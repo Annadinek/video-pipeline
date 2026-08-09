@@ -62,7 +62,8 @@ DEFAULTS = {
     "fillers": ["как бы", "ну", "это", "вот", "значит"],
 }
 BEAM_SIZE = 5
-MAX_RUN = 40  # верхний предел длины повтора (слов) — защита от долгого поиска
+MAX_RUN = 40         # верхний предел длины повтора (слов) — защита от долгого поиска
+ZONE_GAP_WORDS = 12  # цепочка перезапусков: макс. разрыв в словах между попытками
 
 
 def die(msg, code):
@@ -211,18 +212,30 @@ def ff_clip(ffmpeg, src, a, b, out):
         raise RuntimeError(f"ffmpeg отрезок [{a:.1f},{b:.1f}]: {rc.stderr.strip()[-300:]}")
 
 
-def ff_concat(ffmpeg, parts, out, work_dir):
-    listfile = os.path.join(work_dir, "concat.txt")
-    with open(listfile, "w", encoding="utf-8") as f:
-        for p in parts:
-            f.write(f"file '{os.path.abspath(p)}'\n")
+def ff_keep_concat(ffmpeg, src, keeps, out):
+    """
+    Собрать обрезанный файл из оставляемых интервалов ОДНИМ проходом через
+    filter_complex trim+concat. Рез встык, без переходов/затемнений: concat
+    просто стыкует кадры, ffmpeg сам ничего не добавляет. Один прогон
+    перекодировки (а не поштучная склейка — она давала артефакты на стыках).
+    """
+    filt = []
+    labels = []
+    for i, (a, b) in enumerate(keeps):
+        filt.append(f"[0:v]trim=start={a:.3f}:end={b:.3f},setpts=PTS-STARTPTS[v{i}]")
+        filt.append(f"[0:a]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[a{i}]")
+        labels.append(f"[v{i}][a{i}]")
+    filt.append("".join(labels) + f"concat=n={len(keeps)}:v=1:a=1[outv][outa]")
     rc = subprocess.run(
         [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
-         "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", out],
+         "-i", src, "-filter_complex", ";".join(filt),
+         "-map", "[outv]", "-map", "[outa]",
+         "-c:v", "libx264", "-crf", "18", "-preset", "veryfast",
+         "-c:a", "aac", "-b:a", "192k", out],
         capture_output=True, text=True,
     )
     if rc.returncode != 0:
-        raise RuntimeError(f"ffmpeg concat: {rc.stderr.strip()[-300:]}")
+        raise RuntimeError(f"ffmpeg trim+concat: {rc.stderr.strip()[-400:]}")
 
 
 # --- Whisper ---
@@ -302,18 +315,14 @@ def build_tokens(segs, fillers):
     return tokens
 
 
-def find_dupes(segs, cfg):
+def detect_repeats(tokens, need):
     """
-    Дубль = фраза, сказанная дважды ПОДРЯД, слово в слово, длиной ≥ prefix_words.
-    Ищем позицию p, где words[p-L:p] == words[p:p+L] (повтор впритык), берём
-    максимальную L; если L ≥ prefix_words — дубль. Режем первую версию
-    (интервал cut_from..cut_to), оставляем вторую.
+    Найти повторы: позиция p, где words[p-L:p] == words[p:p+L] (повтор впритык),
+    берём максимальную L; если L ≥ need — дубль. Сами интервалы резки считает
+    compute_zones (по зонам перезапусков), тут — только факт повтора.
     """
-    need = int(cfg["prefix_words"])
-    tokens = build_tokens(segs, cfg["fillers"])
     W = [t["w"] for t in tokens]
     n = len(W)
-
     dupes = []
     p = 1
     while p < n:
@@ -335,15 +344,77 @@ def find_dupes(segs, cfg):
                 "index": len(dupes) + 1,
                 "words": L,
                 "phrase": " ".join(W[p:p + L]),
-                # режем первую версию и паузу до второй
-                "cut_from": round(first[0]["start"], 3),
-                "cut_to": round(second[0]["start"], 3),
+                "first_idx": p - L,
+                "second_idx": p,
+                "first_start": round(first[0]["start"], 3),
+                "second_start": round(second[0]["start"], 3),
                 "context": seg_texts,
             })
             p += L  # перешагнуть вторую версию
         else:
             p += 1
     return dupes
+
+
+def compute_zones(tokens, dupes):
+    """
+    Собрать ЗОНЫ перезапусков и вернуть интервалы времени для сплошного реза.
+    Правило (по Анне): если идёт цепочка перезапусков — режем от конца последней
+    нормальной фразы (= начало первой попытки) до начала последней полной попытки.
+    Одним куском: паузы и оборванные слоги внутри зоны уходят вместе со всем,
+    потому что режем по ВРЕМЕНИ, а не по словам.
+
+    Как строим зону: якорь = первые 2 слова повторяемой фразы. Находим все места,
+    где начинается попытка (якорь), группируем близкие (разрыв ≤ ZONE_GAP_WORDS
+    слов) в цепочку. Оставляем цепочку, где есть хотя бы 2 попытки и хотя бы один
+    подтверждённый повтор. Режем [начало первой попытки, начало последней].
+    Последнюю (полную) попытку оставляем.
+    """
+    if not dupes:
+        return []
+    words = [t["w"] for t in tokens]
+    n = len(tokens)
+    seed_positions = set()
+    for d in dupes:
+        seed_positions.add(d["first_idx"])
+        seed_positions.add(d["second_idx"])
+
+    anchors = {tuple(d["phrase"].split()[:2]) for d in dupes if len(d["phrase"].split()) >= 2}
+    starts = set()
+    for a in anchors:
+        la = len(a)
+        for i in range(n - la + 1):
+            if tuple(words[i:i + la]) == a:
+                starts.add(i)
+    if not starts:
+        return []
+
+    idxs = sorted(starts)
+    groups = [[idxs[0]]]
+    for i in idxs[1:]:
+        if i - groups[-1][-1] <= ZONE_GAP_WORDS:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+
+    zones = []
+    for g in groups:
+        if len(g) < 2:
+            continue
+        if not any(g[0] <= sp <= g[-1] for sp in seed_positions):
+            continue  # в зоне нет подтверждённого повтора — не режем
+        cut_from = tokens[g[0]]["start"]        # начало первой попытки
+        cut_to = tokens[g[-1]]["start"]         # начало последней (полной) попытки
+        if cut_to > cut_from:
+            zones.append({"from": round(cut_from, 3), "to": round(cut_to, 3),
+                          "attempts": len(g)})
+    return zones
+
+
+def find_dupes(segs, cfg):
+    """Обёртка для тестов: вернуть найденные повторы."""
+    tokens = build_tokens(segs, cfg["fillers"])
+    return detect_repeats(tokens, int(cfg["prefix_words"]))
 
 
 # --- резка ---
@@ -359,11 +430,12 @@ def merge_intervals(intervals):
     return merged
 
 
-def do_cut(ffmpeg, ffprobe, src, dupes, out_trimmed, cut_out_dir, work_dir):
-    """Вырезать дубли: сохранить каждый кусок в cut_out/, собрать обрезанный файл.
+def do_cut(ffmpeg, ffprobe, src, zones, out_trimmed, cut_out_dir):
+    """Вырезать зоны перезапусков сплошными кусками: сохранить каждый в cut_out/,
+    собрать обрезанный файл одним проходом (рез встык, без затемнений).
     Возвращает (duration_before, duration_after, cut_seconds, cut_pieces)."""
     dur = ffprobe_duration(ffprobe, src)
-    cuts = merge_intervals([(d["cut_from"], d["cut_to"]) for d in dupes])
+    cuts = merge_intervals([(z["from"], z["to"]) for z in zones])
     cuts = [(max(0.0, a), min(dur, b)) for a, b in cuts if min(dur, b) > max(0.0, a)]
 
     os.makedirs(cut_out_dir, exist_ok=True)
@@ -374,7 +446,7 @@ def do_cut(ffmpeg, ffprobe, src, dupes, out_trimmed, cut_out_dir, work_dir):
         pieces.append({"from": round(a, 2), "to": round(b, 2),
                        "seconds": round(b - a, 2), "file": f"cut_out/{name}"})
 
-    # оставшиеся куски (дополнение к вырезанным) → собрать обрезанный файл
+    # оставляемые интервалы (дополнение к вырезанным)
     keeps = []
     prev = 0.0
     for a, b in cuts:
@@ -384,18 +456,10 @@ def do_cut(ffmpeg, ffprobe, src, dupes, out_trimmed, cut_out_dir, work_dir):
     if dur - prev > 1e-3:
         keeps.append((prev, dur))
 
-    if not cuts:
+    if not cuts or not keeps:
         shutil.copyfile(src, out_trimmed)
     else:
-        parts = []
-        for i, (a, b) in enumerate(keeps):
-            part = os.path.join(work_dir, f"keep_{i:03d}.mp4")
-            ff_clip(ffmpeg, src, a, b, part)
-            parts.append(part)
-        if parts:
-            ff_concat(ffmpeg, parts, out_trimmed, work_dir)
-        else:
-            shutil.copyfile(src, out_trimmed)
+        ff_keep_concat(ffmpeg, src, keeps, out_trimmed)
 
     cut_seconds = round(sum(p["seconds"] for p in pieces), 2)
     dur_after = round(dur - cut_seconds, 2)
@@ -431,18 +495,24 @@ def build_report(input_path, srt_path, txt_path, segs, dupes, cfg, duration, cut
         L.append(f"(если повтор короче {cfg['prefix_words']} слов — не считаю; "
                  "поменяй prefix_words в presets/dupes.json).")
     pieces = (cutinfo or {}).get("pieces", [])
-    for i, d in enumerate(dupes):
-        L.append(f"[{d['index']}] повтор {d['words']} слов подряд: «{d['phrase']}»")
-        if i < len(pieces):
-            pc = pieces[i]
-            L.append(f"    вырезан кусок {fmt_mmss(pc['from'])}–{fmt_mmss(pc['to'])} "
+    if pieces:
+        L.append("ВЫРЕЗАННЫЕ КУСКИ (зона перезапусков целиком: повторы + паузы + обрывки):")
+        for j, pc in enumerate(pieces, 1):
+            phrases = [d["phrase"] for d in dupes
+                       if pc["from"] - 0.2 <= d["first_start"] <= pc["to"] + 0.2]
+            L.append(f"[{j}] {fmt_mmss(pc['from'])}–{fmt_mmss(pc['to'])} "
                      f"({pc['seconds']} сек) → {pc['file']}")
-        for ctx in d["context"]:
-            L.append(f"    в речи: «{ctx}»")
+            if phrases:
+                L.append(f"    повторы внутри: «" + "» / «".join(phrases) + "»")
+        L.append("")
+    if dupes:
+        L.append("НАЙДЕННЫЕ ПОВТОРЫ (слово в слово подряд):")
+        for d in dupes:
+            L.append(f"  • {d['words']} слов: «{d['phrase']}»")
         L.append("")
     if cfg["cut_on"]:
-        L.append("Вырезал только повторы слово в слово. Вырезанное сохранено —")
-        L.append("послушай cut_out/, если что не так, скажи — поправлю пороги.")
+        L.append("Резал зону целиком, встык, без затемнений. Вырезанное сохранено —")
+        L.append("послушай cut_out/ и стыки в clip_nodupes.mp4; если не так — поправлю.")
     else:
         L.append("Ничего не вырезано (cut выкл). Посмотри список и скажи, что резать.")
     L.append("=" * 44)
@@ -505,12 +575,14 @@ def main():
     write_txt(segs, txt_path)
 
     duration = max((s["end"] for s in segs), default=0.0)
-    dupes = find_dupes(segs, cfg)
+    tokens = build_tokens(segs, cfg["fillers"])
+    dupes = detect_repeats(tokens, int(cfg["prefix_words"]))
+    zones = compute_zones(tokens, dupes)
 
     cutinfo = None
-    if cfg["cut_on"] and dupes:
-        db, da, cs, pieces = do_cut(ffmpeg, ffprobe, args.input, dupes,
-                                    trimmed, cut_out_dir, work_dir)
+    if cfg["cut_on"] and zones:
+        db, da, cs, pieces = do_cut(ffmpeg, ffprobe, args.input, zones,
+                                    trimmed, cut_out_dir)
         cutinfo = {"duration_before": db, "duration_after": da, "cut_seconds": cs,
                    "cut_count": len(pieces), "pieces": pieces, "trimmed": trimmed}
     elif cfg["cut_on"]:
