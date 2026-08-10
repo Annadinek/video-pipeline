@@ -1,0 +1,12 @@
+{
+  "font": "DejaVu Sans",
+  "bold": true,
+  "font_size_pct": 7.5,
+  "text_color": "FFFFFF",
+  "outline_color": "000000",
+  "outline_pct": 0.5,
+  "shadow_pct": 0.0,
+  "margin_bottom_pct": 12,
+  "margin_side_pct": 6,
+  "words_per_screen": 4
+}

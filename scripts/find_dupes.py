@@ -279,6 +279,29 @@ def write_txt(segs, path):
         f.write(" ".join(s["text"] for s in segs).strip() + "\n")
 
 
+def write_transcript_json(segs, path, cfg, duration):
+    """Расшифровка с пословными метками — переиспользуется субтитрами (03b), не распознаём второй раз."""
+    data = {
+        "language": cfg["language"],
+        "duration": round(duration, 3),
+        "segments": [
+            {
+                "start": round(s["start"], 3),
+                "end": round(s["end"], 3),
+                "text": s["text"],
+                "words": [
+                    {"word": w["w"], "start": w["start"], "end": w["end"]}
+                    for w in (s.get("words") or [])
+                ],
+            }
+            for s in segs
+        ],
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
 # --- токены со временем по словам ---
 def build_tokens(segs, fillers):
     """
@@ -571,10 +594,11 @@ def main():
     if not segs:
         die("Whisper не распознал ни одного куска речи (пустая расшифровка)", 4)
 
+    duration = max((s["end"] for s in segs), default=0.0)
     write_srt(segs, srt_path)
     write_txt(segs, txt_path)
+    write_transcript_json(segs, os.path.join(out_dir, "transcript.json"), cfg, duration)
 
-    duration = max((s["end"] for s in segs), default=0.0)
     tokens = build_tokens(segs, cfg["fillers"])
     dupes = detect_repeats(tokens, int(cfg["prefix_words"]))
     zones = compute_zones(tokens, dupes)

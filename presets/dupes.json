@@ -4,6 +4,6 @@
   "language": "ru",
   "vad_filter": true,
   "prefix_words": 3,
-  "cut": "on",
+  "cut": "off",
   "fillers": ["как бы", "ну", "это", "вот", "значит"]
 }

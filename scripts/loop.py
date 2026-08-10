@@ -51,6 +51,7 @@ STAGES = [
     "02b-audio",
     "02c-stab",
     "03-color",
+    "03b-subtitles",
     "04-caption",
     "05-qa",
     "06-publish",
