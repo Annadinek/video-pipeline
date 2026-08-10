@@ -1,10 +1,12 @@
 name: dupes-test
 
-# Проверка поиска дублей на настоящем видео.
-# Ссылка YouTube → качается отрезок (по умолчанию 2 минуты из середины) →
-# find_dupes.py → в логе список дублей (время, обе версии, похожесть),
-# в артефактах: transcript.srt, transcript.txt, dupes.json, dupes_report.txt.
-# Скачивание — ТОЛЬКО для теста; в конвейере find_dupes.py берёт готовый clip.mp4.
+# Проверка полной цепочки на настоящем видео:
+# Ссылка YouTube → clip.mp4 → audio_clean.py (звук + резка пауз) → find_dupes.py
+# (поиск и резка дублей). В логе цифры: сколько вырезали паузы, сколько зона дублей,
+# было/стало. В артефактах: clip_audio.mp4 (после звука), clip_nodupes.mp4 (финал,
+# послушать), вырезанные куски cut_out/, расшифровка и отчёты.
+# Исходник clip.mp4 не кладём — он крупный.
+# Скачивание — ТОЛЬКО для теста; в конвейере скрипты берут готовый clip.mp4.
 on:
   workflow_dispatch:
     inputs:
@@ -57,13 +59,24 @@ jobs:
             --output outputs/ready/dupes-test/clip.mp4 \
             --start "$START" --seconds "$SECONDS_ARG"
 
-      - name: Поиск дублей (find_dupes.py)
+      # Порядок для ЭТОГО теста по просьбе Анны: звук первым (режет паузы),
+      # потом дубли — чтобы find_dupes резал зону на уже чистом от пауз звуке.
+      - name: Звук + резка пауз (audio_clean.py)
+        run: |
+          set -o pipefail
+          python scripts/audio_clean.py \
+            --input outputs/ready/dupes-test/clip.mp4 \
+            --output outputs/ready/dupes-test/clip_audio.mp4 \
+            | tee outputs/ready/dupes-test/audio_report.txt
+
+      - name: Поиск и резка дублей (find_dupes.py)
         run: |
           set -o pipefail   # чтобы падение python не пряталось за tee
           python scripts/find_dupes.py \
-            --input outputs/ready/dupes-test/clip.mp4 | tee outputs/ready/dupes-test/console.txt
+            --input outputs/ready/dupes-test/clip_audio.mp4 \
+            | tee outputs/ready/dupes-test/console.txt
 
-      - name: Отдаём расшифровку и список дублей
+      - name: Отдаём финал, промежуточное и вырезанное (послушать)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -73,4 +86,8 @@ jobs:
             outputs/ready/dupes-test/transcript.txt
             outputs/ready/dupes-test/dupes.json
             outputs/ready/dupes-test/dupes_report.txt
+            outputs/ready/dupes-test/audio_report.txt
+            outputs/ready/dupes-test/clip_audio.mp4
+            outputs/ready/dupes-test/clip_nodupes.mp4
+            outputs/ready/dupes-test/cut_out/
           if-no-files-found: ignore
