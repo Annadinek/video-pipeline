@@ -8,5 +8,7 @@
   "shadow_pct": 0.0,
   "margin_bottom_pct": 12,
   "margin_side_pct": 6,
-  "words_per_screen": 4
+  "words_per_screen": 4,
+  "highlight": "on",
+  "highlight_color": "FFFF00"
 }
