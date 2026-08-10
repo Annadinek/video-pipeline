@@ -34,11 +34,11 @@ CONFIG_PATH = os.path.join(ROOT, "presets", "subtitles.json")
 DEFAULTS = {
     "font": "DejaVu Sans",
     "bold": True,
-    "font_size_pct": 7.5,       # высота шрифта в % от высоты кадра (с запасом для телефона)
+    "font_size_pct": 7.5,       # размер шрифта в % от МЕНЬШЕЙ стороны (ширина на 9:16)
     "text_color": "FFFFFF",     # белый текст (RRGGBB)
     "outline_color": "000000",  # чёрная обводка (RRGGBB)
-    "outline_pct": 0.5,         # толщина обводки в % от высоты кадра
-    "shadow_pct": 0.0,          # тень в % от высоты кадра
+    "outline_pct": 0.5,         # толщина обводки в % от меньшей стороны
+    "shadow_pct": 0.0,          # тень в % от меньшей стороны
     "margin_bottom_pct": 12,    # отступ снизу в % от высоты кадра
     "margin_side_pct": 6,       # боковые отступы в % от ширины кадра
     "words_per_screen": 4,      # слов на экран (3–5)
@@ -206,11 +206,15 @@ def make_events(groups, cfg):
 
 
 def build_ass(events, cfg, w, h, path):
-    fs = max(1, round(h * float(cfg["font_size_pct"]) / 100.0))
-    outline = max(0, round(h * float(cfg["outline_pct"]) / 100.0))
-    shadow = max(0, round(h * float(cfg["shadow_pct"]) / 100.0))
-    mv = max(0, round(h * float(cfg["margin_bottom_pct"]) / 100.0))
-    ms = max(0, round(w * float(cfg["margin_side_pct"]) / 100.0))
+    # Размер шрифта и обводку считаем от МЕНЬШЕЙ стороны кадра. На вертикали 9:16
+    # это ширина — текст остаётся узким и читаемым, а не разрастается по высоте.
+    # (На 1080×1920 и на 1440×1080 меньшая сторона одна и та же — 1080.)
+    base = min(w, h)
+    fs = max(1, round(base * float(cfg["font_size_pct"]) / 100.0))
+    outline = max(0, round(base * float(cfg["outline_pct"]) / 100.0))
+    shadow = max(0, round(base * float(cfg["shadow_pct"]) / 100.0))
+    mv = max(0, round(h * float(cfg["margin_bottom_pct"]) / 100.0))   # отступ снизу — от высоты
+    ms = max(0, round(w * float(cfg["margin_side_pct"]) / 100.0))     # боковые — от ширины
     bold = -1 if cfg.get("bold") else 0
     primary = ass_color(cfg["text_color"])
     outline_c = ass_color(cfg["outline_color"])
@@ -328,7 +332,7 @@ def main():
           + (f", событий {len(events)}" if cfg['highlight_on'] else ""))
     print(f"Шрифт:        {cfg['font']}"
           f"{' bold' if cfg.get('bold') else ''}, {style['font_px']} px "
-          f"({cfg['font_size_pct']}% высоты)")
+          f"({cfg['font_size_pct']}% меньшей стороны)")
     print(f"Обводка:      {style['outline_px']} px, цвет #{cfg['outline_color']}, текст #{cfg['text_color']}")
     print(f"Положение:    внизу, отступ {style['margin_bottom_px']} px от края")
     print(f"Файл:         {output}")

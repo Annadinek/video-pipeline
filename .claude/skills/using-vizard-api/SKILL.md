@@ -54,7 +54,7 @@ resp = requests.post(
         "ext": "mp4",
         "lang": "auto",
         "getClips": 0,          # 0 = editing mode
-        "subtitleSwitch": 1,
+        "subtitleSwitch": 0,    # 0 = БЕЗ субтитров Vizard — свои рисуем в 03b-subtitles
         "headlineSwitch": 1,
         "autoBrollSwitch": 1,
         "removeSilenceSwitch": 1,
