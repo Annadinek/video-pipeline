@@ -34,14 +34,16 @@ CONFIG_PATH = os.path.join(ROOT, "presets", "subtitles.json")
 DEFAULTS = {
     "font": "DejaVu Sans",
     "bold": True,
-    "font_size_pct": 7.5,       # высота шрифта в % от высоты кадра (с запасом для телефона)
+    "font_size_pct": 7.5,       # размер шрифта в % от МЕНЬШЕЙ стороны (ширина на 9:16)
     "text_color": "FFFFFF",     # белый текст (RRGGBB)
     "outline_color": "000000",  # чёрная обводка (RRGGBB)
-    "outline_pct": 0.5,         # толщина обводки в % от высоты кадра
-    "shadow_pct": 0.0,          # тень в % от высоты кадра
+    "outline_pct": 0.5,         # толщина обводки в % от меньшей стороны
+    "shadow_pct": 0.0,          # тень в % от меньшей стороны
     "margin_bottom_pct": 12,    # отступ снизу в % от высоты кадра
     "margin_side_pct": 6,       # боковые отступы в % от ширины кадра
     "words_per_screen": 4,      # слов на экран (3–5)
+    "highlight": "on",          # подсветка звучащего слова: on/off
+    "highlight_color": "FFFF00",  # цвет подсветки (RRGGBB), по умолчанию жёлтый
 }
 
 
@@ -76,6 +78,7 @@ def load_config():
         cfg["words_per_screen"] = max(1, int(cfg["words_per_screen"]))
     except (TypeError, ValueError):
         cfg["words_per_screen"] = DEFAULTS["words_per_screen"]
+    cfg["highlight_on"] = str(cfg.get("highlight", "on")).strip().lower() not in ("off", "false", "0", "no", "нет")
     cfg["_config_status"] = status
     return cfg
 
@@ -120,38 +123,82 @@ def esc(text):
             .replace("\n", " ").strip())
 
 
-def group_events(segments, n):
-    """Слова → группы по n на экран (по пословным меткам), с временем каждой группы."""
-    events = []
+def make_groups(segments, n):
+    """
+    Слова → группы по n на экран (по пословным меткам). Каждая группа — список
+    слов [{word,start,end}]. Если пословных меток нет, раскидываем слова куска
+    по его времени равномерно.
+    """
+    groups = []
     for seg in segments:
         words = seg.get("words") or []
-        clean = [w for w in words
+        clean = [{"word": str(w["word"]).strip(),
+                  "start": float(w["start"]), "end": float(w["end"])}
+                 for w in words
                  if w.get("word") and str(w["word"]).strip()
                  and w.get("start") is not None and w.get("end") is not None]
         if clean:
             for i in range(0, len(clean), n):
                 grp = clean[i:i + n]
-                start = float(grp[0]["start"])
-                end = float(grp[-1]["end"])
-                text = " ".join(str(w["word"]).strip() for w in grp).strip()
-                if text and end > start:
-                    events.append([start, end, text])
+                if grp:
+                    groups.append(grp)
         else:
-            # нет пословных меток — раскидываем слова куска по его времени
             toks = str(seg.get("text", "")).split()
             if not toks:
                 continue
             s0, e0 = float(seg["start"]), float(seg["end"])
             span = max(e0 - s0, 0.01)
-            for i in range(0, len(toks), n):
-                grp = toks[i:i + n]
-                start = s0 + (i / len(toks)) * span
-                end = s0 + (min(i + n, len(toks)) / len(toks)) * span
-                text = " ".join(grp).strip()
-                if text and end > start:
-                    events.append([start, end, text])
+            m = len(toks)
+            synth = [{"word": t,
+                      "start": s0 + (k / m) * span,
+                      "end": s0 + ((k + 1) / m) * span}
+                     for k, t in enumerate(toks)]
+            for i in range(0, m, n):
+                grp = synth[i:i + n]
+                if grp:
+                    groups.append(grp)
+    groups.sort(key=lambda g: g[0]["start"])
+    return groups
+
+
+def highlight_line(group, j, hl_tag, base_tag):
+    """Строка группы: слово j — цветом подсветки, остальные — базовым."""
+    parts = []
+    for idx, w in enumerate(group):
+        wt = esc(w["word"])
+        if idx == j:
+            parts.append(f"{hl_tag}{wt}{base_tag}")
+        else:
+            parts.append(wt)
+    return " ".join(parts)
+
+
+def make_events(groups, cfg):
+    """
+    Из групп собрать события субтитров [start, end, text].
+    highlight on → на каждое слово своё событие (текущее слово — жёлтым),
+    подсветка «переезжает» от слова к слову. off → одно событие на группу.
+    """
+    hl_tag = "{\\c" + ass_color(cfg["highlight_color"]) + "}"
+    base_tag = "{\\c" + ass_color(cfg["text_color"]) + "}"
+    events = []
+    for grp in groups:
+        if cfg["highlight_on"] and len(grp) >= 1:
+            for j, w in enumerate(grp):
+                start = w["start"]
+                # текущее слово подсвечено, пока не началось следующее (строка не мигает)
+                end = grp[j + 1]["start"] if j + 1 < len(grp) else w["end"]
+                if end <= start:
+                    end = start + 0.15
+                events.append([start, end, highlight_line(grp, j, hl_tag, base_tag)])
+        else:
+            start = grp[0]["start"]
+            end = grp[-1]["end"]
+            if end <= start:
+                end = start + 0.15
+            events.append([start, end, " ".join(esc(w["word"]) for w in grp)])
     events.sort(key=lambda e: e[0])
-    # не даём соседним группам налезать друг на друга
+    # не даём соседним событиям налезать друг на друга
     for i in range(len(events) - 1):
         if events[i][1] > events[i + 1][0]:
             events[i][1] = max(events[i][0] + 0.05, events[i + 1][0] - 0.02)
@@ -159,11 +206,15 @@ def group_events(segments, n):
 
 
 def build_ass(events, cfg, w, h, path):
-    fs = max(1, round(h * float(cfg["font_size_pct"]) / 100.0))
-    outline = max(0, round(h * float(cfg["outline_pct"]) / 100.0))
-    shadow = max(0, round(h * float(cfg["shadow_pct"]) / 100.0))
-    mv = max(0, round(h * float(cfg["margin_bottom_pct"]) / 100.0))
-    ms = max(0, round(w * float(cfg["margin_side_pct"]) / 100.0))
+    # Размер шрифта и обводку считаем от МЕНЬШЕЙ стороны кадра. На вертикали 9:16
+    # это ширина — текст остаётся узким и читаемым, а не разрастается по высоте.
+    # (На 1080×1920 и на 1440×1080 меньшая сторона одна и та же — 1080.)
+    base = min(w, h)
+    fs = max(1, round(base * float(cfg["font_size_pct"]) / 100.0))
+    outline = max(0, round(base * float(cfg["outline_pct"]) / 100.0))
+    shadow = max(0, round(base * float(cfg["shadow_pct"]) / 100.0))
+    mv = max(0, round(h * float(cfg["margin_bottom_pct"]) / 100.0))   # отступ снизу — от высоты
+    ms = max(0, round(w * float(cfg["margin_side_pct"]) / 100.0))     # боковые — от ширины
     bold = -1 if cfg.get("bold") else 0
     primary = ass_color(cfg["text_color"])
     outline_c = ass_color(cfg["outline_color"])
@@ -187,7 +238,8 @@ def build_ass(events, cfg, w, h, path):
     with open(path, "w", encoding="utf-8") as f:
         f.write(header)
         for start, end, text in events:
-            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{esc(text)}\n")
+            # text уже подготовлен make_events (экранирован, с тегами подсветки) — не трогаем
+            f.write(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Default,,0,0,0,,{text}\n")
     return {"font_px": fs, "outline_px": outline, "margin_bottom_px": mv}
 
 
@@ -255,7 +307,8 @@ def main():
         die("в transcript.json нет сегментов", 4)
 
     w, h = video_size(ffprobe, args.input)
-    events = group_events(segments, cfg["words_per_screen"])
+    groups = make_groups(segments, cfg["words_per_screen"])
+    events = make_events(groups, cfg)
     if not events:
         die("не удалось собрать субтитры из расшифровки", 4)
 
@@ -263,7 +316,9 @@ def main():
     style = build_ass(events, cfg, w, h, ass_path)
     burn(ffmpeg, args.input, ass_path, output)
 
-    info = {"events": len(events), "words_per_screen": cfg["words_per_screen"],
+    info = {"groups": len(groups), "events": len(events),
+            "words_per_screen": cfg["words_per_screen"],
+            "highlight": cfg["highlight_on"], "highlight_color": cfg["highlight_color"],
             "font_px": style["font_px"], "outline_px": style["outline_px"],
             "margin_bottom_px": style["margin_bottom_px"], "resolution": f"{w}x{h}"}
     wrote = write_pipeline(out_dir, info)
@@ -272,10 +327,12 @@ def main():
     print(f"Конфиг:       {cfg['_config_status']}")
     print(f"Вход:         {args.input}  ({w}x{h})")
     print(f"Расшифровка:  {transcript} (переиспользована, не распознавал заново)")
-    print(f"Субтитров:    {len(events)} групп по ≤{cfg['words_per_screen']} слов")
+    print(f"Субтитров:    {len(groups)} строк по ≤{cfg['words_per_screen']} слов")
+    print(f"Подсветка:    {'ВКЛ, цвет #' + cfg['highlight_color'] + ' (жёлтым звучащее слово)' if cfg['highlight_on'] else 'выкл'}"
+          + (f", событий {len(events)}" if cfg['highlight_on'] else ""))
     print(f"Шрифт:        {cfg['font']}"
           f"{' bold' if cfg.get('bold') else ''}, {style['font_px']} px "
-          f"({cfg['font_size_pct']}% высоты)")
+          f"({cfg['font_size_pct']}% меньшей стороны)")
     print(f"Обводка:      {style['outline_px']} px, цвет #{cfg['outline_color']}, текст #{cfg['text_color']}")
     print(f"Положение:    внизу, отступ {style['margin_bottom_px']} px от края")
     print(f"Файл:         {output}")
