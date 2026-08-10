@@ -1,0 +1,83 @@
+name: subs-test
+
+# Проверка субтитров в кадре на настоящем видео.
+# Ссылка YouTube → качается 1 минута с речью → find_dupes.py делает пословную
+# расшифровку (cut off, ничего не режет) → subtitles.py вжигает субтитры в кадр.
+# В артефактах: clip_subs.mp4 (готовое видео с субтитрами).
+# Скачивание — ТОЛЬКО для теста; в конвейере subtitles.py берёт clip_color.mp4.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '7:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять'
+        required: false
+        default: '60'
+        type: string
+
+jobs:
+  subs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим yt-dlp, Whisper, ffmpeg и шрифты
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs faster-whisper
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          # шрифт с кириллицей для вжигания субтитров
+          fc-list | grep -qi "dejavu sans" || (sudo apt-get update && sudo apt-get install -y fonts-dejavu-core)
+
+      - name: Скачиваем отрезок (только для теста)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url }}            # через env — без подстановки в shell
+          START: ${{ inputs.start }}
+          SECONDS_ARG: ${{ inputs.seconds }}
+        run: |
+          python scripts/fetch_youtube.py \
+            --url "$URL" \
+            --output outputs/ready/subtest/clip_color.mp4 \
+            --start "$START" --seconds "$SECONDS_ARG"
+
+      - name: Пословная расшифровка (find_dupes.py, cut off)
+        run: |
+          set -o pipefail
+          python scripts/find_dupes.py \
+            --input outputs/ready/subtest/clip_color.mp4 | tee outputs/ready/subtest/dupes_console.txt
+
+      - name: Субтитры в кадр (subtitles.py)
+        run: |
+          set -o pipefail
+          python scripts/subtitles.py \
+            --input outputs/ready/subtest/clip_color.mp4 | tee outputs/ready/subtest/subs_report.txt
+
+      - name: Отдаём видео с субтитрами
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: subs-test
+          path: |
+            outputs/ready/subtest/clip_subs.mp4
+            outputs/ready/subtest/transcript.json
+            outputs/ready/subtest/subs_report.txt
+          if-no-files-found: ignore
