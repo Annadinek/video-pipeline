@@ -45,13 +45,22 @@ CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
 
 DEFAULTS = {
     "denoise": "on",
-    "denoise_strength": "medium",
+    "denoise_strength": "high",
     "pauses": "on",
     "silence_threshold_db": -35,
     "silence_min_sec": 0.45,
     "keep_edge_sec": 0.12,
     "target_lufs": -14,
     "true_peak_db": -1,
+    # деэссер против свиста на шипящих (с/ш/щ/ж)
+    "deesser": "off",
+    "deesser_intensity": 0.4,   # сила подавления (0..1)
+    "deesser_freq": 0.25,       # частота разделения (доля от Найквиста; ~6 кГц при 48к)
+    # вырез гулкости комнаты ("бочка") в полосе ~200–500 Гц
+    "deboom": "off",
+    "deboom_freq": 300,         # центр выреза, Гц
+    "deboom_q": 1.0,            # добротность (ширина полосы)
+    "deboom_gain": -5,          # глубина выреза, дБ
 }
 LOUDNORM_LRA = 11  # целевой разброс громкости для loudnorm
 
@@ -117,14 +126,42 @@ def denoise_level(cfg):
     return lv if lv in STRENGTH else "medium"
 
 
-def build_pre(level):
-    """Цепочка ДО loudnorm в строгом порядке: highpass[,afftdn],compand,alimiter."""
+def deboom_filter(cfg):
+    """Вырез гулкости комнаты ('бочка') в полосе ~200–500 Гц — peaking EQ с провалом."""
+    return (f"equalizer=f={cfg['deboom_freq']}:width_type=q"
+            f":w={cfg['deboom_q']}:g={cfg['deboom_gain']}")
+
+
+def deesser_filter(cfg):
+    """Деэссер против свиста на шипящих."""
+    return f"deesser=i={cfg['deesser_intensity']}:m=0.5:f={cfg['deesser_freq']}:s=o"
+
+
+def build_chain(level, cfg, deboom=False, deesser=False):
+    """
+    Цепочка ДО loudnorm. Порядок:
+    highpass=80 [→ вырез гула] [→ afftdn] [→ деэссер] → compand → лимитер.
+    Вырез гула — до шумодава (чистим низ), деэссер — после (гасим звон, если он от шумодава).
+    """
     parts = [HIGHPASS]
+    if deboom:
+        parts.append(deboom_filter(cfg))
     if level != "off":
         parts.append(STRENGTH[level])
+    if deesser:
+        parts.append(deesser_filter(cfg))
     parts.append(COMPAND)
     parts.append(LIMITER)
     return ",".join(parts)
+
+
+def build_pre(level, cfg=None):
+    """Обычный режим: строим цепочку по конфигу (deboom/deesser включаются флагами в audio.json)."""
+    if cfg is None:
+        return build_chain(level, DEFAULTS, deboom=False, deesser=False)
+    deboom = str(cfg.get("deboom", "off")).strip().lower() != "off"
+    deesser = str(cfg.get("deesser", "off")).strip().lower() != "off"
+    return build_chain(level, cfg, deboom=deboom, deesser=deesser)
 
 
 def run(cmd):
@@ -246,7 +283,7 @@ def process_one(ffmpeg, ffprobe, src, out, level, cfg, work_dir, tag):
     Полная цепочка: highpass[,afftdn],compand,loudnorm (2 прохода) → затем резка пауз.
     Возвращает pauses_cut.
     """
-    pre = build_pre(level)
+    pre = build_pre(level, cfg)
     measured = loudnorm_measure(ffmpeg, src, pre, cfg)
     filtered = os.path.join(work_dir, f"filtered_{tag}.mp4")
     loudnorm_apply(ffmpeg, src, pre, measured, filtered, cfg)
@@ -400,12 +437,90 @@ def run_compare(ffmpeg, ffprobe, args, cfg, work_dir):
     print("===================================")
 
 
+def band_level(ffmpeg, path, lo, hi):
+    """Средняя громкость в полосе [lo,hi] Гц (dB) — для оценки звона/яркости."""
+    _, _, err = run([
+        ffmpeg, "-hide_banner", "-i", path,
+        "-af", f"highpass=f={lo},lowpass=f={hi},volumedetect", "-f", "null", "-",
+    ])
+    m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", err)
+    return round(float(m.group(1)), 1) if m else None
+
+
+def process_with_pre(ffmpeg, src, out, pre, cfg):
+    """loudnorm 2 прохода с заданной цепочкой pre. Пауз не режем (для сравнения на слух)."""
+    measured = loudnorm_measure(ffmpeg, src, pre, cfg)
+    loudnorm_apply(ffmpeg, src, pre, measured, out, cfg)
+
+
+def run_audiofix(ffmpeg, ffprobe, args, cfg, work_dir):
+    """
+    4 варианта звука на 30-секундном отрезке с речью (слушать с ТЕЛЕФОНА):
+      1) current         — как сейчас (шумодав high)
+      2) nodenoise       — без шумодава
+      3) deesser         — как сейчас + деэссер против свиста
+      4) deesser_deboom  — деэссер + вырез гулкости 200–500 Гц
+    Плюс (5) denoise_low — тише шумодав, для сравнения off/low на слух.
+    Цифрами: громкость, пик и полоса 4–8 кГц (там сидят звон/шипящие).
+    """
+    out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
+    start, dur = pick_speech_window(ffmpeg, ffprobe, args.input)
+    segment = os.path.join(work_dir, "seg.mp4")
+    extract_segment(ffmpeg, args.input, start, dur, segment)
+
+    i0, tp0, _ = measure_loudness(ffmpeg, segment, cfg)
+    band0 = band_level(ffmpeg, segment, 4000, 8000)
+
+    variants = [
+        ("current",        build_chain("high", cfg, deboom=False, deesser=False)),
+        ("nodenoise",      build_chain("off",  cfg, deboom=False, deesser=False)),
+        ("deesser",        build_chain("high", cfg, deboom=False, deesser=True)),
+        ("deesser_deboom", build_chain("high", cfg, deboom=True,  deesser=True)),
+        ("denoise_low",    build_chain("low",  cfg, deboom=False, deesser=False)),
+    ]
+
+    print("=== ЗВУК: 4+1 варианта на послушать (телефон) ===")
+    print(f"Конфиг:     {cfg['_config_status']}")
+    print(f"Отрезок:    {round(start,1)}–{round(start+dur,1)} с (самый громкий = речь), {round(dur,1)} с")
+    print(f"Деэссер:    {deesser_filter(cfg)}")
+    print(f"Вырез гула: {deboom_filter(cfg)}")
+    print(f"До обработки: {i0} LUFS, пик {tp0} dBTP, полоса 4–8 кГц {band0} dB")
+    print("-" * 72)
+    print(f"{'вариант':<16}{'громкость':>11}{'пик dBTP':>10}{'4–8 кГц dB':>12}   что это")
+    print("-" * 72)
+    what = {
+        "current": "как сейчас (шумодав high)",
+        "nodenoise": "без шумодава",
+        "deesser": "+ деэссер",
+        "deesser_deboom": "+ деэссер + вырез гула",
+        "denoise_low": "шумодав low (для off/low)",
+    }
+    files, rows = [], []
+    for name, pre in variants:
+        out = os.path.join(out_dir, f"audiofix_{name}.mp4")
+        process_with_pre(ffmpeg, segment, out, pre, cfg)
+        i1, tp1, _ = measure_loudness(ffmpeg, out, cfg)
+        band = band_level(ffmpeg, out, 4000, 8000)
+        print(f"{name:<16}{i1:>9} LUFS{tp1:>9} {band:>10} dB   {what[name]}")
+        files.append(out)
+        rows.append({"variant": name, "loudness": i1, "peak": tp1, "band_4_8k": band})
+    print("-" * 72)
+    print("Полоса 4–8 кГц: чем выше, тем сильнее звон/шипящие. Сравни nodenoise vs denoise_low vs current —")
+    print("если у current заметно выше, значит звон даёт шумодав.")
+    for f in files:
+        print("Файл:", f)
+    print("audiofix =", json.dumps(rows, ensure_ascii=False))
+    print("=" * 48)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="outputs/ready/[id]/clip.mp4")
     ap.add_argument("--output", required=True, help="outputs/ready/[id]/clip_audio_clean.mp4")
     ap.add_argument("--compare", action="store_true",
                     help="режим сравнения: 30 с речи × (off/low/medium/high). Только для audio-test.")
+    ap.add_argument("--audiofix", action="store_true",
+                    help="4+1 варианта (current/nodenoise/deesser/deesser_deboom/denoise_low) на послушать.")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -421,7 +536,9 @@ def main():
     work_dir = os.path.join(out_dir, "work")
     os.makedirs(work_dir, exist_ok=True)
 
-    if args.compare:
+    if args.audiofix:
+        run_audiofix(ffmpeg, ffprobe, args, cfg, work_dir)
+    elif args.compare:
         run_compare(ffmpeg, ffprobe, args, cfg, work_dir)
     else:
         run_normal(ffmpeg, ffprobe, args, cfg, work_dir)

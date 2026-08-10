@@ -1,0 +1,80 @@
+name: audio-fix
+
+# Правка звука: гулкость комнаты, звон на шипящих (с/ш/щ/ж), фоновый гул.
+# Ссылка YouTube → качается кусок → берётся 30-секундный отрезок с речью →
+# audio_clean.py --audiofix собирает 4+1 варианта на послушать (с ТЕЛЕФОНА):
+#   current / nodenoise / deesser / deesser_deboom / denoise_low
+# В логе таблица цифрами (громкость, пик, полоса 4–8 кГц — там звон/шипящие).
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '5:45'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять (из них берём 30 с речи)'
+        required: false
+        default: '120'
+        type: string
+
+jobs:
+  audiofix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим yt-dlp и ffmpeg
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Скачиваем отрезок (только для теста)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url }}            # через env — без подстановки в shell
+          START: ${{ inputs.start }}
+          SECONDS_ARG: ${{ inputs.seconds }}
+        run: |
+          python scripts/fetch_youtube.py \
+            --url "$URL" \
+            --output outputs/audiofix/clip.mp4 \
+            --start "$START" --seconds "$SECONDS_ARG"
+
+      - name: Собираем варианты звука (audio_clean.py --audiofix)
+        run: |
+          set -o pipefail
+          python scripts/audio_clean.py \
+            --input outputs/audiofix/clip.mp4 \
+            --output outputs/audiofix/x.mp4 \
+            --audiofix | tee outputs/audiofix/report.txt
+
+      - name: Отдаём варианты на послушать
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audio-fix
+          path: |
+            outputs/audiofix/audiofix_current.mp4
+            outputs/audiofix/audiofix_nodenoise.mp4
+            outputs/audiofix/audiofix_deesser.mp4
+            outputs/audiofix/audiofix_deesser_deboom.mp4
+            outputs/audiofix/audiofix_denoise_low.mp4
+            outputs/audiofix/report.txt
+          if-no-files-found: ignore
