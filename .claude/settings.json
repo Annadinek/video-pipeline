@@ -62,9 +62,17 @@
     "coderabbit@claude-plugins-official": true,
     "datadog@claude-plugins-official": true,
     "sourcegraph@claude-plugins-official": true,
-    "greptile@claude-plugins-official": true
+    "greptile@claude-plugins-official": true,
+    "example-skills@anthropic-agent-skills": true,
+    "document-skills@anthropic-agent-skills": true
   },
   "extraKnownMarketplaces": {
+    "anthropic-agent-skills": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/skills"
+      }
+    },
     "marketingskills": {
       "source": {
         "source": "github",
