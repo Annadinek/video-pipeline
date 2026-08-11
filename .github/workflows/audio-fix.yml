@@ -2,8 +2,8 @@ name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
 # scripts/audio_clean.py → в логе отчёт цифрами, файл(ы) в артефактах.
-# variants=false: один файл clip_audio_clean.mp4 (обычная цепочка).
-# variants=true:  три варианта clip_now/clip_mid/clip_max (как сейчас/средне/максимум).
+# models=false: один файл clip_audio_clean.mp4 (цепочка highpass → arnndn → громкость).
+# models=true:  по файлу на каждую модель rnnoise (clip_bd/cb/lq/mp/sh) — выбрать лучшую.
 on:
   workflow_dispatch:
     inputs:
@@ -21,8 +21,8 @@ on:
         required: false
         default: '30'
         type: string
-      variants:
-        description: 'Собрать 3 варианта (как сейчас/средне/максимум)'
+      models:
+        description: 'Сравнить все модели rnnoise (по файлу на модель)'
         required: false
         default: false
         type: boolean
@@ -63,14 +63,14 @@ jobs:
 
       - name: Обрабатываем звук
         env:
-          VARIANTS: ${{ inputs.variants }}   # через env — без подстановки в shell
+          MODELS: ${{ inputs.models }}   # через env — без подстановки в shell
         run: |
           set -o pipefail
-          if [ "$VARIANTS" = "true" ]; then
+          if [ "$MODELS" = "true" ]; then
             python scripts/audio_clean.py \
               --input outputs/audiofix/clip.mp4 \
               --output outputs/audiofix/clip.mp4 \
-              --variants | tee outputs/audiofix/report.txt
+              --models | tee outputs/audiofix/report.txt
           else
             python scripts/audio_clean.py \
               --input outputs/audiofix/clip.mp4 \
@@ -83,9 +83,6 @@ jobs:
         with:
           name: audio-fix
           path: |
-            outputs/audiofix/clip_audio_clean.mp4
-            outputs/audiofix/clip_now.mp4
-            outputs/audiofix/clip_mid.mp4
-            outputs/audiofix/clip_max.mp4
+            outputs/audiofix/clip_*.mp4
             outputs/audiofix/report.txt
           if-no-files-found: ignore
