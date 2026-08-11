@@ -1,8 +1,9 @@
 name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
-# scripts/audio_clean.py (шумодав + громкость) → в логе отчёт цифрами,
-# готовый файл в артефактах на послушать.
+# scripts/audio_clean.py → в логе отчёт цифрами, файл(ы) в артефактах.
+# variants=false: один файл clip_audio_clean.mp4 (обычная цепочка).
+# variants=true:  три варианта clip_now/clip_mid/clip_max (как сейчас/средне/максимум).
 on:
   workflow_dispatch:
     inputs:
@@ -13,13 +14,18 @@ on:
       start:
         description: 'С какого места брать (мм:сс)'
         required: false
-        default: '5:45'
+        default: '0:00'
         type: string
       seconds:
-        description: 'Сколько секунд взять (из них берём 30 с речи)'
+        description: 'Сколько секунд взять'
         required: false
-        default: '120'
+        default: '30'
         type: string
+      variants:
+        description: 'Собрать 3 варианта (как сейчас/средне/максимум)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   audiofix:
@@ -56,18 +62,30 @@ jobs:
             --start "$START" --seconds "$SECONDS_ARG"
 
       - name: Обрабатываем звук
+        env:
+          VARIANTS: ${{ inputs.variants }}   # через env — без подстановки в shell
         run: |
           set -o pipefail
-          python scripts/audio_clean.py \
-            --input outputs/audiofix/clip.mp4 \
-            --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
+          if [ "$VARIANTS" = "true" ]; then
+            python scripts/audio_clean.py \
+              --input outputs/audiofix/clip.mp4 \
+              --output outputs/audiofix/clip.mp4 \
+              --variants | tee outputs/audiofix/report.txt
+          else
+            python scripts/audio_clean.py \
+              --input outputs/audiofix/clip.mp4 \
+              --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
+          fi
 
-      - name: Отдаём файл на послушать
+      - name: Отдаём файл(ы) на послушать
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audio-fix
           path: |
             outputs/audiofix/clip_audio_clean.mp4
+            outputs/audiofix/clip_now.mp4
+            outputs/audiofix/clip_mid.mp4
+            outputs/audiofix/clip_max.mp4
             outputs/audiofix/report.txt
           if-no-files-found: ignore
