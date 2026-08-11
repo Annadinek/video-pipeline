@@ -9,11 +9,14 @@ audio_clean.py — обработка звука ролика. ДВА ШАГА, 
 гулким («из ведра»). Поэтому шум давим ПЕРВЫМ, на тихом звуке, и только потом
 поднимаем громкость на уже чистом сигнале.
 
-Проверка цифрами — по паузам, где Анна молчит:
-  - паузы находим по ИСХОДНИКУ (silencedetect);
-  - в этих же паузах меряем фон: исходник → после шумодава → итог;
-  - если после шумодава фон не упал хотя бы на floor_drop_target_db —
-    шумодав слабый, усиливаем сам (gentle→low→medium→strong).
+Проверка цифрами — по фону в самом тихом участке (там, где Анна молчит или
+голос проседает). Меряем НЕ порогом тишины (у гулкой комнаты фон высокий,
+порог ничего не ловит), а напрямую: режем звук на окна ~0.5 с, astats считает
+RMS каждого окна. На ИСХОДНИКЕ находим самое тихое реальное окно и запоминаем
+его НОМЕР; фон после шумодава и в итоге меряем в ТОМ ЖЕ окне (по номеру) —
+сравнение честное, один и тот же момент времени.
+  - если после шумодава фон не упал на floor_drop_target_db — шумодав слабый,
+    усиливаем сам (gentle→low→medium→strong).
 
 Вход:  outputs/ready/[id]/clip.mp4
 Выход: outputs/ready/[id]/clip_audio_clean.mp4  (один файл)
@@ -23,9 +26,7 @@ audio_clean.py — обработка звука ролика. ДВА ШАГА, 
   denoise_strength      gentle/low/medium/strong  (по умолчанию medium)
   target_lufs           целевая громкость (эталон -9.3)
   true_peak_db          потолок пика (безопасно -1)
-  pause_thresh_db       порог тишины для поиска пауз (умолч. -30)
-  pause_min_sec         минимальная длина паузы (умолч. 0.3)
-  floor_drop_target_db  на сколько хотим опустить фон в паузах (умолч. 6)
+  floor_drop_target_db  на сколько хотим опустить фон шумодавом (умолч. 6)
 
 Только Python 3, ffmpeg и стандартная библиотека. Исходник не трогаем.
 """
@@ -47,11 +48,11 @@ DEFAULTS = {
     "denoise_strength": "medium",   # gentle не справлялся с фоном — по умолчанию сильнее
     "target_lufs": -9.3,            # как у эталона Анны
     "true_peak_db": -1,             # эталон ~0.1; безопасно -1 (0 клиппит)
-    "pause_thresh_db": -30,         # порог тишины для поиска пауз (где Анна молчит)
-    "pause_min_sec": 0.3,           # минимальная длина паузы
-    "floor_drop_target_db": 6,      # на сколько хотим опустить фон в паузах шумодавом
+    "floor_drop_target_db": 6,      # на сколько хотим опустить фон в тихих участках шумодавом
 }
-LOUDNORM_LRA = 11  # целевой разброс громкости для loudnorm
+LOUDNORM_LRA = 11        # целевой разброс громкости для loudnorm
+FLOOR_WIN_SEC = 0.5      # длина окна замера фона (с); в семплы переводим по частоте файла
+FLOOR_SILENCE_DB = -120  # ниже этого — цифровая тишина (правка/пустое окно), не фон комнаты
 
 # Шумодав afftdn от мягкого к сильному. nr — сила подавления (больше = сильнее),
 # nf — порог шума в дБ. От gentle к strong фон в паузах давится всё сильнее.
@@ -119,6 +120,19 @@ def ffprobe_duration(ffprobe, path):
     return float(out.strip())
 
 
+def ffprobe_sample_rate(ffprobe, path):
+    """Частота дискретизации звука (Гц). Не смогли прочитать → 48000."""
+    _, out, _ = run([
+        ffprobe, "-v", "error", "-select_streams", "a:0",
+        "-show_entries", "stream=sample_rate", "-of", "csv=p=0", path,
+    ])
+    try:
+        sr = int(out.strip())
+        return sr if sr > 0 else 48000
+    except (ValueError, AttributeError):
+        return 48000
+
+
 def loudnorm_measure(ffmpeg, src, pre, cfg):
     """1-й проход loudnorm: измерить. pre — фильтры до loudnorm ('' = ничего)."""
     chain = (pre + "," if pre else "") + (
@@ -159,58 +173,42 @@ def measure_loudness(ffmpeg, path, cfg):
             round(float(m["input_lra"]), 1))
 
 
-def detect_pause_intervals(ffmpeg, path, thresh_db, min_sec, inset=0.05, min_keep=0.12):
+def window_rms(ffmpeg, path, win_samples):
     """
-    Найти паузы (где Анна молчит) через silencedetect. Возвращает список (start, end)
-    в секундах. Края паузы поджимаем на inset, чтобы не зацепить хвост/начало слова —
-    меряем чистый фон. Слишком короткие (< min_keep) отбрасываем.
+    RMS каждого окна ~win_samples (dB), по порядку. astats со сбросом на каждое
+    окно + ametadata print. Битые/тихие окна дают '-inf' → храним как -inf,
+    позиция окна сохраняется (номера окон совпадают у исходника и результата).
     """
-    _, _, err = run([
+    _, out, err = run([
         ffmpeg, "-hide_banner", "-i", path,
-        "-af", f"silencedetect=noise={thresh_db}dB:d={min_sec}",
+        "-af", (f"asetnsamples=n={win_samples}:p=0,astats=metadata=1:reset=1,"
+                "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-"),
         "-f", "null", "-",
     ])
-    starts, ends = [], []
-    for line in err.splitlines():
-        m = re.search(r"silence_start:\s*([-\d.]+)", line)
-        if m:
-            starts.append(float(m.group(1)))
-        m = re.search(r"silence_end:\s*([-\d.]+)", line)
-        if m:
-            ends.append(float(m.group(1)))
-    intervals = []
-    for i, s in enumerate(starts):
-        if i >= len(ends):
-            break  # запись кончилась тишиной — конца нет, пропускаем
-        a, b = s + inset, ends[i] - inset
-        if b - a >= min_keep:
-            intervals.append((a, b))
-    return intervals
+    vals = []
+    for x in re.findall(r"RMS_level=(\S+)", out + "\n" + err):
+        try:
+            vals.append(float(x))   # '-inf' → -inf, не падаем
+        except ValueError:
+            vals.append(float("-inf"))
+    return vals
 
 
-def level_in_intervals(ffmpeg, path, intervals):
-    """
-    Средняя громкость (dB) звука ТОЛЬКО в заданных паузах = уровень фона.
-    Одни и те же интервалы применяем к исходнику/после шумодава/итогу — сравнение
-    честное (те же куски времени). Вырезаем паузы (asplit+atrim+concat) и меряем
-    volumedetect. Нет пауз → None.
-    """
-    if not intervals:
+def floor_pick(vals):
+    """(номер, значение dB) самого тихого РЕАЛЬНОГО окна (цифровую тишину пропускаем)."""
+    best_i, best_v = None, None
+    for i, v in enumerate(vals):
+        if v > FLOOR_SILENCE_DB and (best_v is None or v < best_v):
+            best_i, best_v = i, v
+    return best_i, (round(best_v, 1) if best_v is not None else None)
+
+
+def floor_at(vals, idx):
+    """Фон в окне №idx (dB). Нет окна/цифровая тишина → None."""
+    if idx is None or idx >= len(vals):
         return None
-    n = len(intervals)
-    splits = "".join(f"[a{i}]" for i in range(n))
-    parts = [f"[0:a]asplit={n}{splits}"]
-    for i, (a, b) in enumerate(intervals):
-        parts.append(f"[a{i}]atrim=start={a:.3f}:end={b:.3f},asetpts=PTS-STARTPTS[p{i}]")
-    concat_in = "".join(f"[p{i}]" for i in range(n))
-    parts.append(f"{concat_in}concat=n={n}:v=0:a=1,volumedetect")
-    graph = ";".join(parts)
-    _, _, err = run([
-        ffmpeg, "-hide_banner", "-i", path,
-        "-filter_complex", graph, "-f", "null", "-",
-    ])
-    m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", err)
-    return round(float(m.group(1)), 1) if m else None
+    v = vals[idx]
+    return round(v, 1) if v > FLOOR_SILENCE_DB else None
 
 
 def denoise_to_file(ffmpeg, src, out, level):
@@ -223,25 +221,19 @@ def denoise_to_file(ffmpeg, src, out, level):
         raise RuntimeError(f"шумодав ({level}) не удался: {err.strip()[-300:]}")
 
 
-def process(ffmpeg, src, out, cfg, work_dir):
+def process(ffmpeg, ffprobe, src, out, cfg, work_dir):
     """
-    Два шага: (1) шумодав с проверкой по паузам и авто-усилением, (2) громкость.
+    Два шага: (1) шумодав с проверкой фона и авто-усилением, (2) громкость.
+    Фон меряем в одном и том же окне (самом тихом на исходнике) у всех версий.
     Возвращает словарь с цифрами для отчёта и pipeline.json.
     """
-    thresh = cfg["pause_thresh_db"]
-    min_sec = cfg["pause_min_sec"]
     target_drop = float(cfg["floor_drop_target_db"])
+    win = max(1, round(FLOOR_WIN_SEC * ffprobe_sample_rate(ffprobe, src)))
 
-    # ШАГ 0. Паузы ищем по исходнику. Не нашли — ослабим порог один раз.
-    intervals = detect_pause_intervals(ffmpeg, src, thresh, min_sec)
-    used_thresh = thresh
-    if not intervals:
-        intervals = detect_pause_intervals(ffmpeg, src, thresh + 5, min_sec)
-        if intervals:
-            used_thresh = thresh + 5
-    floor_in = level_in_intervals(ffmpeg, src, intervals)
+    # ШАГ 0. Самое тихое реальное окно исходника — его номер запоминаем.
+    idx, floor_in = floor_pick(window_rms(ffmpeg, src, win))
 
-    # ШАГ 1. Шумодав ДО громкости, с авто-усилением по паузам.
+    # ШАГ 1. Шумодав ДО громкости, с авто-усилением по фону (в том же окне).
     level0 = denoise_level(cfg)
     ladder = []  # [(level, floor)] — что пробовали
     if level0 == "off":
@@ -252,7 +244,7 @@ def process(ffmpeg, src, out, cfg, work_dir):
         for lvl in order:
             f = os.path.join(work_dir, f"denoised_{lvl}.mp4")
             denoise_to_file(ffmpeg, src, f, lvl)
-            fl = level_in_intervals(ffmpeg, f, intervals)
+            fl = floor_at(window_rms(ffmpeg, f, win), idx)
             ladder.append((lvl, fl))
             used_level, denoised, floor_dn = lvl, f, fl
             drop = (floor_in - fl) if (floor_in is not None and fl is not None) else None
@@ -264,11 +256,9 @@ def process(ffmpeg, src, out, cfg, work_dir):
     measured = loudnorm_measure(ffmpeg, denoised, "", cfg)
     loudnorm_apply(ffmpeg, denoised, "", measured, out, cfg)
     i1, tp1, lra1 = measure_loudness(ffmpeg, out, cfg)
-    floor_final = level_in_intervals(ffmpeg, out, intervals)
+    floor_final = floor_at(window_rms(ffmpeg, out, win), idx)
 
     return {
-        "pauses": len(intervals),
-        "pause_thresh_db": used_thresh,
         "floor_in": floor_in,
         "floor_denoised": floor_dn,
         "floor_final": floor_final,
@@ -313,17 +303,16 @@ def _delta(a, b):
 
 
 def run_normal(ffmpeg, ffprobe, args, cfg, work_dir):
-    """Один файл: шумодав (с проверкой по паузам) → громкость. Цифры в отчёт."""
+    """Один файл: шумодав (с проверкой фона) → громкость. Цифры в отчёт."""
     out = args.output
     dur = ffprobe_duration(ffprobe, args.input)
-    r = process(ffmpeg, args.input, out, cfg, work_dir)
+    r = process(ffmpeg, ffprobe, args.input, out, cfg, work_dir)
 
     fi, fd, ff = r["floor_in"], r["floor_denoised"], r["floor_final"]
     lvl = r["denoise"]
     audio = {
         "duration": round(dur, 2),
-        "pauses": r["pauses"],
-        "noise_floor_in": fi,            # фон в паузах: исходник (эталон)
+        "noise_floor_in": fi,             # фон в тихом участке: исходник (эталон)
         "noise_floor_after_denoise": fd,  # после шумодава, ДО громкости
         "noise_floor_final": ff,          # итог, после громкости
         "loudness_before": r["loudness_before"], "loudness_after": r["loudness_after"],
@@ -335,8 +324,7 @@ def run_normal(ffmpeg, ffprobe, args, cfg, work_dir):
 
     print("=== ОТЧЁТ audio_clean (сначала шум, потом громкость) ===")
     print(f"Конфиг:      {cfg['_config_status']}")
-    print(f"Паузы:       найдено {r['pauses']} (порог тишины {r['pause_thresh_db']} dB)")
-    print("ФОН В ПАУЗАХ (где Анна молчит, тише = ниже число):")
+    print("ФОН В САМОМ ТИХОМ УЧАСТКЕ (там, где ты молчишь; тише = ниже число):")
     print(f"  исходник (твой эталон): {_fmt(fi)} dB")
     print(f"  после шумодава:         {_fmt(fd)} dB   ({_delta(fi, fd)} к исходнику)")
     print(f"  итог (после громкости): {_fmt(ff)} dB   ({_delta(fi, ff)} к исходнику)")
@@ -349,8 +337,8 @@ def run_normal(ffmpeg, ffprobe, args, cfg, work_dir):
     print(f"Файл:        {out}")
     print(f"pipeline.json: {'обновлён (current.audio)' if wrote else 'не трогал (нет current с этим id)'}")
 
-    # Честная проверка: упал ли фон достаточно.
-    if fi is not None and fd is not None:
+    # Честная проверка: упал ли фон достаточно (только если шумодав вообще включён).
+    if lvl != "off" and fi is not None and fd is not None:
         drop = fi - fd
         if drop < r["drop_target_db"]:
             print(f"⚠️ Фон упал только на {drop:.1f} dB (хотели ≥{r['drop_target_db']}). "
