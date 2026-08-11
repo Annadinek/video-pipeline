@@ -1,10 +1,7 @@
 {
-  "highpass_hz": 90,
-  "deboom_hz": 300,
-  "deboom_q": 1.0,
-  "deboom_gain": -6,
+  "highpass_hz": 80,
   "denoise": "on",
-  "denoise_strength": "gentle",
-  "target_lufs": -9.3,
+  "denoise_model": "sh.rnnn",
+  "target_lufs": -14,
   "true_peak_db": -1
 }
