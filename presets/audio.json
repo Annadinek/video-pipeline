@@ -1,9 +1,10 @@
 {
+  "highpass_hz": 90,
+  "deboom_hz": 300,
+  "deboom_q": 1.0,
+  "deboom_gain": -6,
   "denoise": "on",
-  "denoise_strength": "medium",
+  "denoise_strength": "gentle",
   "target_lufs": -9.3,
-  "true_peak_db": -1,
-  "pause_thresh_db": -30,
-  "pause_min_sec": 0.3,
-  "floor_drop_target_db": 6
+  "true_peak_db": -1
 }
