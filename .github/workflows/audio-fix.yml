@@ -1,10 +1,8 @@
 name: audio-fix
 
-# Правка звука: гулкость комнаты, звон на шипящих (с/ш/щ/ж), фоновый гул.
-# Ссылка YouTube → качается кусок → берётся 30-секундный отрезок с речью →
-# audio_clean.py --audiofix собирает 4+1 варианта на послушать (с ТЕЛЕФОНА):
-#   current / nodenoise / deesser / deesser_deboom / denoise_low
-# В логе таблица цифрами (громкость, пик, полоса 4–8 кГц — там звон/шипящие).
+# Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
+# scripts/audio_clean.py (шумодав + громкость) → в логе отчёт цифрами,
+# готовый файл в артефактах на послушать.
 on:
   workflow_dispatch:
     inputs:
@@ -57,24 +55,19 @@ jobs:
             --output outputs/audiofix/clip.mp4 \
             --start "$START" --seconds "$SECONDS_ARG"
 
-      - name: Собираем варианты звука (audio_clean.py --audiofix)
+      - name: Обрабатываем звук
         run: |
           set -o pipefail
           python scripts/audio_clean.py \
             --input outputs/audiofix/clip.mp4 \
-            --output outputs/audiofix/x.mp4 \
-            --audiofix | tee outputs/audiofix/report.txt
+            --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
 
-      - name: Отдаём варианты на послушать
+      - name: Отдаём файл на послушать
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audio-fix
           path: |
-            outputs/audiofix/audiofix_current.mp4
-            outputs/audiofix/audiofix_nodenoise.mp4
-            outputs/audiofix/audiofix_deesser.mp4
-            outputs/audiofix/audiofix_deesser_deboom.mp4
-            outputs/audiofix/audiofix_denoise_low.mp4
+            outputs/audiofix/clip_audio_clean.mp4
             outputs/audiofix/report.txt
           if-no-files-found: ignore

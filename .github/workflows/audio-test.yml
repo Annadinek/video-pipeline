@@ -57,21 +57,17 @@ jobs:
             --output outputs/ready/audio-test/clip.mp4 \
             --start 0:00 --seconds 120
 
-      - name: Обрабатываем звук (режим сравнения)
+      - name: Обрабатываем звук
         run: |
           python scripts/audio_clean.py \
             --input outputs/ready/audio-test/clip.mp4 \
-            --output outputs/ready/audio-test/clip_audio_clean.mp4 \
-            --compare
+            --output outputs/ready/audio-test/clip_audio_clean.mp4
 
-      - name: Отдаём файлы для прослушивания
+      - name: Отдаём файл для прослушивания
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: audio-test-compare
+          name: audio-test
           path: |
-            outputs/ready/audio-test/compare_nodenoise.mp4
-            outputs/ready/audio-test/compare_low.mp4
-            outputs/ready/audio-test/compare_medium.mp4
-            outputs/ready/audio-test/compare_high.mp4
+            outputs/ready/audio-test/clip_audio_clean.mp4
           if-no-files-found: ignore
