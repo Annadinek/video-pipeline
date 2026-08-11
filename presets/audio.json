@@ -1,6 +1,9 @@
 {
   "denoise": "on",
-  "denoise_strength": "gentle",
+  "denoise_strength": "medium",
   "target_lufs": -9.3,
-  "true_peak_db": -1
+  "true_peak_db": -1,
+  "pause_thresh_db": -30,
+  "pause_min_sec": 0.3,
+  "floor_drop_target_db": 6
 }
