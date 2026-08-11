@@ -74,6 +74,14 @@ STRENGTH = {
     "strong": "afftdn=nr=24:nf=-24",
 }
 
+# Три варианта на послушать (--variants): ключ, название, полосы выреза (f,q,g), шумодав.
+# «как сейчас» = принятая цепочка; средне/максимум давят фон сильнее (просьба Анны).
+VARIANTS = [
+    ("now", "как сейчас", [(300, 1.0, -6)], "gentle"),
+    ("mid", "средне",     [(300, 1.0, -10)], "low"),
+    ("max", "максимум",   [(250, 1.0, -12), (400, 1.0, -12)], "low"),
+]
+
 
 def die(msg, code):
     print(msg, file=sys.stderr)
@@ -222,11 +230,24 @@ def apply_af(ffmpeg, src, out, af):
         raise RuntimeError(f"сборка звука не удалась ({af}): {err.strip()[-300:]}")
 
 
-def process(ffmpeg, ffprobe, src, out, cfg):
+def deboom_filter(bands):
+    """Вырез гулкой полосы: одна или несколько equalizer с провалом. bands = [(f,q,g)]."""
+    return ",".join(
+        f"equalizer=f={f:g}:width_type=q:w={q:g}:g={g:g}" for (f, q, g) in bands
+    )
+
+
+def process(ffmpeg, ffprobe, src, out, cfg, bands=None, level=None):
     """
-    Фон по шагам меряем анализом с накопленным префиксом фильтров (без промежуточных
-    файлов), итог собираем одним проходом. Возвращает словарь цифр для отчёта.
+    Цепочка highpass → вырез(bands) → шумодав(level) → фикс-гейн. Фон по шагам меряем
+    анализом с накопленным префиксом фильтров (без промежуточных файлов), итог собираем
+    одним проходом. bands/level=None → берём из cfg (обычный режим). Возвращает цифры.
     """
+    if bands is None:
+        bands = [(cfg["deboom_hz"], cfg["deboom_q"], cfg["deboom_gain"])]
+    if level is None:
+        level = denoise_level(cfg)
+
     win = max(1, round(FLOOR_WIN_SEC * ffprobe_sample_rate(ffprobe, src)))
     idx, floor_src = floor_pick(window_rms(ffmpeg, src, win))
 
@@ -234,13 +255,11 @@ def process(ffmpeg, ffprobe, src, out, cfg):
         return floor_at(window_rms(ffmpeg, src, win, pre), idx)
 
     hp = f"highpass=f={cfg['highpass_hz']:g}"
-    deboom = (f"equalizer=f={cfg['deboom_hz']:g}:width_type=q"
-              f":w={cfg['deboom_q']:g}:g={cfg['deboom_gain']:g}")
-    level = denoise_level(cfg)
+    after_db = f"{hp},{deboom_filter(bands)}"
+    clean = after_db + ("" if level == "off" else f",{STRENGTH[level]}")
 
     floor_hp = floor(hp)
-    floor_db = floor(f"{hp},{deboom}")
-    clean = f"{hp},{deboom}" + ("" if level == "off" else f",{STRENGTH[level]}")
+    floor_db = floor(after_db)
     floor_dn = floor(clean)
 
     # 4) фиксированный гейн по ЧИСТОМУ (до гейна) сигналу, с запасом по пику
@@ -251,14 +270,16 @@ def process(ffmpeg, ffprobe, src, out, cfg):
     limited_by = "пик" if gain_peak <= gain_loud else "громкость"
 
     apply_af(ffmpeg, src, out, f"{clean},volume={gain}dB")   # один проход = одно сжатие
-    floor_out = floor_at(window_rms(ffmpeg, out, win), idx)
+    # фон итога меряем на исходнике с ПОЛНОЙ цепочкой (то же окно, без сдвига от
+    # AAC-задержки/latency при чтении готового файла)
+    floor_out = floor(f"{clean},volume={gain}dB")
     i_out, tp_out, lra_out = measure_loudness(ffmpeg, out, cfg)
     i_src, tp_src, _ = measure_loudness(ffmpeg, src, cfg)
 
     return {
         "floor_src": floor_src, "floor_hp": floor_hp, "floor_db": floor_db,
         "floor_dn": floor_dn, "floor_out": floor_out,
-        "denoise": level, "gain_db": gain, "gain_limited_by": limited_by,
+        "denoise": level, "bands": bands, "gain_db": gain, "gain_limited_by": limited_by,
         "peak_over": tp_out > cfg["true_peak_db"],
         "loudness_before": i_src, "loudness_after": i_out,
         "peak_before": tp_src, "peak_after": tp_out, "lra_after": lra_out,
@@ -338,10 +359,45 @@ def run_normal(ffmpeg, ffprobe, args, cfg):
     print("===============================================")
 
 
+def run_variants(ffmpeg, ffprobe, args, cfg):
+    """Три варианта звука (как сейчас/средне/максимум) — по файлу на каждый, фон по шагам."""
+    out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
+    print("=== ВАРИАНТЫ ЗВУКА (30 с, послушать и выбрать) ===")
+    print(f"Конфиг:      {cfg['_config_status']}")
+    print(f"Цепочка (не меняется): highpass {cfg['highpass_hz']:g} Гц → вырез → шумодав → фикс-гейн")
+    print("-" * 64)
+    rows = []
+    for key, title, bands, level in VARIANTS:
+        out = os.path.join(out_dir, f"clip_{key}.mp4")
+        r = process(ffmpeg, ffprobe, args.input, out, cfg, bands=bands, level=level)
+        bands_s = " + ".join(f"{f:g}Гц/{g:g}dB" for (f, _, g) in bands)
+        print(f"[{title}]  вырез: {bands_s};  шумодав: {level}")
+        print(f"  фон: исходник {_fmt(r['floor_src'])} → highpass {_fmt(r['floor_hp'])} "
+              f"→ вырез {_fmt(r['floor_db'])} → шумодав {_fmt(r['floor_dn'])} "
+              f"→ громкость {_fmt(r['floor_out'])} dB")
+        print(f"  ИТОГ фон: {_fmt(r['floor_src'])} → {_fmt(r['floor_out'])} dB "
+              f"({_delta(r['floor_src'], r['floor_out'])}); "
+              f"громкость {r['loudness_after']} LUFS; пик {r['peak_after']} dBTP; гейн {r['gain_db']:+g} dB")
+        if r["peak_over"]:
+            print(f"  ⚠️ пик {r['peak_after']} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг")
+        print(f"  файл: {out}")
+        print("-" * 64)
+        rows.append({"variant": key, "title": title, "bands": bands_s, "denoise": level,
+                     "floor_src": r["floor_src"], "floor_final": r["floor_out"],
+                     "loudness": r["loudness_after"], "peak": r["peak_after"]})
+    max_freqs = "/".join(f"{f:g}" for (f, _, _) in VARIANTS[-1][2])
+    print(f"Голос: вырез в максимуме ({max_freqs} Гц) задевает основной тон женского голоса —")
+    print("если в максимуме голос тонкий/глухой, бери средний. Оценка на слух — за Анной.")
+    print("variants =", json.dumps(rows, ensure_ascii=False))
+    print("=" * 64)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="outputs/ready/[id]/clip.mp4")
     ap.add_argument("--output", required=True, help="outputs/ready/[id]/clip_audio_clean.mp4")
+    ap.add_argument("--variants", action="store_true",
+                    help="собрать 3 варианта (как сейчас/средне/максимум) на послушать")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -355,7 +411,10 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
     os.makedirs(out_dir, exist_ok=True)
 
-    run_normal(ffmpeg, ffprobe, args, cfg)
+    if args.variants:
+        run_variants(ffmpeg, ffprobe, args, cfg)
+    else:
+        run_normal(ffmpeg, ffprobe, args, cfg)
 
 
 if __name__ == "__main__":

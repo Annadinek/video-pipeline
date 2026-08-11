@@ -5,26 +5,28 @@
 - outputs/ready/[id]/clip.mp4
 
 ## ЧТО ДЕЛАЮ
-Запускаю `scripts/audio_clean.py`:
-1. Паузы. silencedetect: порог −35 dB, пауза от 0.45 с. Вырезаю из видео и звука
-   одновременно, оставляя по 0.12 с с каждого края — чтобы не рубить слова.
-   Резка пересборкой отрезков, не аудиофильтром: звук и картинка не разъезжаются.
-   Пауз не найдено — резку пропускаю, пишу в отчёт, но шум и громкость делаю обязательно.
-2. Шум. Сначала arnndn, если модели нет — afftdn. Мягко.
-3. Громкость. loudnorm в два прохода до −16 LUFS, пик не выше −1 dB.
-Дополнительно делаю `clip_audio_nodenoise.mp4` — та же обработка, но без шумоподавления,
-чтобы Анна сравнила на слух.
-Исходник `clip.mp4` не трогаю.
+Запускаю `scripts/audio_clean.py --input ... --output ...`. Цепочка (чистим →
+громкость), параметры — в `presets/audio.json`:
+1. highpass ~90 Гц — срез низов (рокот/гул комнаты).
+2. Вырез гулкой полосы ~200–400 Гц (`equalizer` с провалом) — убирает «бочку».
+3. Шумодав `afftdn` (мягкий) — остаточный шип.
+4. Громкость лёгким ФИКСИРОВАННЫМ гейном (`volume`), не динамическим loudnorm:
+   гейн двигает голос и фон одинаково и не поднимает фон. Ограничен так, чтобы
+   истинный пик остался ниже `true_peak_db`.
+
+Исходник `clip.mp4` не трогаю. Фон в паузах меряю по окнам на каждом шаге —
+видно, где падает. Голос не трогаю: слишком сильный вырез 200–400 делает его
+глухим/тонким — тогда откатываю и сообщаю, на каком значении сломалось.
 
 ## ЧТО ОТДАЮ
 - outputs/ready/[id]/clip_audio_clean.mp4
-- outputs/ready/[id]/clip_audio_nodenoise.mp4 (для сравнения на слух)
-- запись в state/pipeline.json:
-  - audio.duration_before
-  - audio.duration_after
-  - audio.pauses_cut
-  - audio.loudness_before
-  - audio.loudness_after
+- запись в state/pipeline.json (`current.audio`):
+  - audio.duration
+  - audio.noise_floor_src / noise_floor_highpass / noise_floor_deboom /
+    noise_floor_denoise / noise_floor_final  (фон в тихом месте по шагам)
+  - audio.loudness_before / loudness_after
+  - audio.peak_before / peak_after
+  - audio.gain_db
   - audio.denoise
 
 ## КОГДА СТОП
