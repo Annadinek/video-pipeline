@@ -1,10 +1,6 @@
 {
   "denoise": "on",
-  "denoise_strength": "high",
-  "pauses": "on",
-  "silence_threshold_db": -35,
-  "silence_min_sec": 0.45,
-  "keep_edge_sec": 0.12,
-  "target_lufs": -14,
+  "denoise_strength": "gentle",
+  "target_lufs": -9.3,
   "true_peak_db": -1
 }
