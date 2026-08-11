@@ -11,13 +11,19 @@
 
 ## 2. Порядок чтения в начале сессии
 
+**ПЕРВЫМ ДЕЛОМ** читать **HANDOVER.md** (в корне) — там живое состояние: что
+сделано по этапам, какие настройки приняты и почему, что не работает, следующий
+шаг. **В конце работы дописывать HANDOVER.md** (журнал сессий — новые записи
+сверху; при необходимости обновлять таблицу настроек и раздел «Что не работает»).
+
 **Для работы конвейера** читать строго по порядку:
-1. brain/RULES.md
-2. brain/FOUNDATION.md
-3. brain/FORBIDDEN.md
-4. brain/ROLES.md
-5. state/pipeline.json
-6. state/trigger.txt
+1. HANDOVER.md
+2. brain/RULES.md
+3. brain/FOUNDATION.md
+4. brain/FORBIDDEN.md
+5. brain/ROLES.md
+6. state/pipeline.json
+7. state/trigger.txt
 
 **Для стратегического разговора** — плюс:
 - brain/MEMORY.md
@@ -43,6 +49,10 @@ PLAN и LIBRARY конвейеру не нужны — на них контек�
 
 Двигает цикл `scripts/loop.py`. Этап **05-qa пропускать нельзя никогда**.
 Если `qa.passed = false` — дальше не идём.
+
+> Таблица выше — исходная схема. **Актуальный порядок и состав этапов** (добавлены
+> 02a-dupes, 02b-audio, 02c-stab, 03b-subtitles; 02-cut → 03a-cut, перемещён после
+> цвета) — в `scripts/loop.py` (STAGES) и в **HANDOVER.md**.
 
 ## 4. Правила
 
