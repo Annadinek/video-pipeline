@@ -1,9 +1,9 @@
 {
-  "highpass_hz": 100,
-  "top_boost": "on",
-  "top_boost_hz": 3000,
-  "top_boost_width": 2,
-  "top_boost_gain": 5,
+  "bass_gain": -12,
+  "bass_hz": 200,
+  "bass_width": 1.2,
+  "treble_gain": 8,
+  "treble_hz": 3500,
   "target_lufs": -14,
   "lra": 11,
   "true_peak_db": -1

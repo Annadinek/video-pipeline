@@ -6,25 +6,23 @@
 
 ## ЧТО ДЕЛАЮ
 Запускаю `scripts/audio_clean.py --input ... --output ...`. Проблема звука Анны —
-не шум, а ПЕРЕКОС СПЕКТРА (эффект близости микрофона: низ раздут, верх провален).
-Лечим эквалайзером, не шумодавом. Параметры — в `presets/audio.json`. Цепочка:
-1. `highpass` ~100 Гц — срез раздутого низа.
-2. (если `top_boost=on`) `equalizer` +5 дБ на ~3 кГц (ширина 2 октавы) — подъём
-   верха, разборчивость.
+не шум, а ПЕРЕКОС СПЕКТРА (эффект близости микрофона): горб на низах (~120 Гц)
+громче голоса, верх провален. Лечим ПОЛОЧНЫМИ фильтрами (не highpass, не шумодав:
+highpass режет ниже среза и горб на 120 Гц не трогает; ровного шума нет).
+Параметры — в `presets/audio.json`. Цепочка:
+1. `bass` shelf −12 дБ ниже ~200 Гц (ширина 1.2 октавы) — гасит раздутый низ.
+2. `treble` shelf +8 дБ выше ~3.5 кГц — поднимает провален­ный верх.
 3. `loudnorm` I=-14:LRA=11:TP=-1 — громкость.
 
-Никаких шумодавов (arnndn/afftdn/Demucs) и выреза полос 200–400 Гц — проверено,
-для этого голоса они не годятся. Модели arnndn лежат в `presets/rnnoise/`, но в
-цепочке НЕ используются. Исходник `clip.mp4` не трогаю.
-
-Режим `--variants` (для подбора): два файла `clip_hp.mp4` (только highpass) и
-`clip_hp_eq.mp4` (highpass + подъём верха) на сравнение.
+Голос (~800 Гц) полки не трогают. Никаких highpass / arnndn / Demucs / узкого
+equalizer / выреза полос. Модели arnndn лежат в `presets/rnnoise/`, но не
+используются. Исходник `clip.mp4` не трогаю.
 
 ## ЧТО ОТДАЮ
 - outputs/ready/[id]/clip_audio_clean.mp4
 - запись в state/pipeline.json (`current.audio`):
   - audio.duration
-  - audio.chain  ("hp" | "hp_eq")
+  - audio.chain  (строка фильтров)
   - audio.spectrum_before / spectrum_after  (уровень по 7 полосам, dB)
   - audio.loudness_before / loudness_after
   - audio.peak_before / peak_after

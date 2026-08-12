@@ -3,34 +3,31 @@
 audio_clean.py — обработка звука ролика.
 
 Причина «бочки» у Анны — НЕ шум, а ПЕРЕКОС СПЕКТРА (эффект близости микрофона):
-низ раздут (громче голоса), верх провален на ~14 дБ. Шумодавы не помогали —
-ровного шума нет, им нечего искать. Лечим эквалайзером, не шумодавом.
+горб на низах (~120 Гц) громче голоса, верх провален на ~14 дБ. highpass не
+помогал: он режет НИЖЕ точки среза, а горб на 120 Гц выше неё. Шумодавы тоже —
+ровного шума нет. Лечим ПОЛОЧНЫМИ фильтрами (bass/treble shelf): давят/поднимают
+всю область за частотой.
 
-Две команды (решение Анны, без нейросетей):
-  hp:     highpass=100 → loudnorm=I=-14:LRA=11:TP=-1
-  hp_eq:  highpass=100 → equalizer=f=3000:width_type=o:width=2:g=5 → loudnorm=...
+Команда (решение Анны, проверено ею по спектру):
+  bass=g=-12:f=200:width_type=o:width=1.2  → treble=g=8:f=3500  → loudnorm
 
-highpass 100 — срезает раздутый низ; equalizer +5 дБ на 3 кГц (ширина 2 октавы) —
-поднимает верх, возвращает разборчивость; loudnorm — громкость до -14 LUFS.
+bass shelf −12 дБ ниже 200 Гц — гасит раздутый горб (низ −8 дБ, не −1).
+treble shelf +8 дБ выше 3.5 кГц — поднимает верх (+7 дБ). Голос (~800 Гц) не тронут.
+loudnorm I=-14:LRA=11:TP=-1 — громкость.
 
-Модели arnndn (presets/rnnoise/) НЕ удалены, но из цепочки убраны — шумодава нет.
+Никаких highpass, arnndn, узкого equalizer. Модели arnndn (presets/rnnoise/) не
+удалены, но не используются.
 
 Вход:  outputs/ready/[id]/clip.mp4
 Выход: outputs/ready/[id]/clip_audio_clean.mp4  (один файл)
-Режим --variants: два файла clip_hp.mp4 и clip_hp_eq.mp4 на сравнение.
 
 Отчёт: спектр по 7 полосам (40/120/300/800/2000/5000/10000 Гц) до и после —
-видно, как highpass режет низ, а equalizer поднимает верх.
+видно, как полки давят низ и поднимают верх, а голос стоит на месте.
 
 Настройки — presets/audio.json (нет файла/сломан → умолчания, не падаем):
-  highpass_hz       срез низов, Гц (умолч. 100)
-  top_boost         on/off — поднимать ли верх (вариант hp_eq против hp)
-  top_boost_hz      центр подъёма верха, Гц (умолч. 3000)
-  top_boost_width   ширина подъёма, октавы (умолч. 2)
-  top_boost_gain    величина подъёма, дБ (умолч. 5)
-  target_lufs       целевая громкость (умолч. -14)
-  lra               целевой разброс loudnorm (умолч. 11)
-  true_peak_db      потолок пика (умолч. -1)
+  bass_gain, bass_hz, bass_width   низкая полка (умолч. -12 / 200 Гц / 1.2 октавы)
+  treble_gain, treble_hz           высокая полка (умолч. +8 / 3500 Гц)
+  target_lufs, lra, true_peak_db   loudnorm (умолч. -14 / 11 / -1)
 
 Только Python 3, ffmpeg и стандартная библиотека.
 """
@@ -49,17 +46,17 @@ LOG_DIR = os.path.join(ROOT, "logs")
 CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
 
 DEFAULTS = {
-    "highpass_hz": 100,       # срез раздутого низа (эффект близости)
-    "top_boost": "on",        # поднимать верх (hp_eq); off = только highpass (hp)
-    "top_boost_hz": 3000,     # центр подъёма верха
-    "top_boost_width": 2,     # ширина, октавы
-    "top_boost_gain": 5,      # величина подъёма, дБ
-    "target_lufs": -14,       # целевая громкость
-    "lra": 11,                # целевой разброс loudnorm
-    "true_peak_db": -1,       # потолок пика
+    "bass_gain": -12,      # низкая полка: гасим раздутый низ, дБ
+    "bass_hz": 200,        # частота низкой полки, Гц
+    "bass_width": 1.2,     # ширина перехода, октавы
+    "treble_gain": 8,      # высокая полка: поднимаем верх, дБ
+    "treble_hz": 3500,     # частота высокой полки, Гц
+    "target_lufs": -14,    # целевая громкость
+    "lra": 11,             # целевой разброс loudnorm
+    "true_peak_db": -1,    # потолок пика
 }
-NUMERIC_KEYS = ["highpass_hz", "top_boost_hz", "top_boost_width",
-                "top_boost_gain", "target_lufs", "lra", "true_peak_db"]
+NUMERIC_KEYS = ["bass_gain", "bass_hz", "bass_width", "treble_gain", "treble_hz",
+                "target_lufs", "lra", "true_peak_db"]
 BANDS = [40, 120, 300, 800, 2000, 5000, 10000]  # полосы замера спектра, Гц
 
 
@@ -112,21 +109,23 @@ def ffprobe_duration(ffprobe, path):
     ])
     if rc != 0 or not out.strip():
         raise RuntimeError(f"ffprobe не смог прочитать длительность {path}: {err.strip()}")
-    return float(out.strip())
+    try:
+        return float(out.strip())
+    except ValueError:
+        raise RuntimeError(f"ffprobe отдал нечисловую длительность '{out.strip()}' для {path}")
 
 
-def build_chain(cfg, boost):
-    """Цепочка фильтров: highpass → [equalizer верх] → loudnorm. boost=подъём верха."""
-    parts = [f"highpass=f={cfg['highpass_hz']:g}"]
-    if boost:
-        parts.append(
-            f"equalizer=f={cfg['top_boost_hz']:g}:width_type=o"
-            f":width={cfg['top_boost_width']:g}:g={cfg['top_boost_gain']:g}"
-        )
-    parts.append(
-        f"loudnorm=I={cfg['target_lufs']:g}:LRA={cfg['lra']:g}:TP={cfg['true_peak_db']:g}"
-    )
-    return ",".join(parts)
+def build_shelves(cfg):
+    """Полки без громкости: низкая полка → высокая полка (чистый эффект спектра)."""
+    return (f"bass=g={cfg['bass_gain']:g}:f={cfg['bass_hz']:g}"
+            f":width_type=o:width={cfg['bass_width']:g},"
+            f"treble=g={cfg['treble_gain']:g}:f={cfg['treble_hz']:g}")
+
+
+def build_chain(cfg):
+    """Полная цепочка: полки → loudnorm."""
+    return (build_shelves(cfg) +
+            f",loudnorm=I={cfg['target_lufs']:g}:LRA={cfg['lra']:g}:TP={cfg['true_peak_db']:g}")
 
 
 def apply_af(ffmpeg, src, out, af):
@@ -139,26 +138,24 @@ def apply_af(ffmpeg, src, out, af):
         raise RuntimeError(f"сборка звука не удалась ({af}): {err.strip()[-300:]}")
 
 
-def band_level(ffmpeg, path, center):
-    """Средняя громкость в полосе шириной 1 октава вокруг center (dB) — уровень полосы."""
-    _, _, err = run([
-        ffmpeg, "-hide_banner", "-i", path,
-        "-af", f"bandpass=f={center:g}:width_type=o:w=1,volumedetect", "-f", "null", "-",
-    ])
+def band_level(ffmpeg, path, center, pre=""):
+    """Средняя громкость в полосе 1 октава вокруг center (dB). pre — фильтры до замера."""
+    af = ((pre + ",") if pre else "") + f"bandpass=f={center:g}:width_type=o:w=1,volumedetect"
+    _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-vn", "-af", af, "-f", "null", "-"])
     m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", err)
     return round(float(m.group(1)), 1) if m else None
 
 
-def spectrum(ffmpeg, path):
-    """Уровень по 7 полосам (dB). Метод: bandpass 1 октава + volumedetect."""
-    return {c: band_level(ffmpeg, path, c) for c in BANDS}
+def spectrum(ffmpeg, path, pre=""):
+    """Уровень по 7 полосам (dB). pre — фильтры до замера (напр. полки без loudnorm)."""
+    return {c: band_level(ffmpeg, path, c, pre) for c in BANDS}
 
 
 def measure_loudness(ffmpeg, path, cfg):
-    """(I, TP) файла — для отчёта громкости и пика до/после."""
+    """(I, TP) файла — для отчёта громкости и пика до/после. Тишина/-inf → (None, None)."""
     chain = (f"loudnorm=I={cfg['target_lufs']:g}:TP={cfg['true_peak_db']:g}"
              f":LRA={cfg['lra']:g}:print_format=json")
-    _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-af", chain, "-f", "null", "-"])
+    _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-vn", "-af", chain, "-f", "null", "-"])
     start, end = err.rfind("{"), err.rfind("}")
     if start == -1 or end == -1 or end < start:
         return None, None
@@ -168,7 +165,7 @@ def measure_loudness(ffmpeg, path, cfg):
     except (ValueError, KeyError):
         return None, None
     if not (math.isfinite(i) and math.isfinite(tp)):
-        return None, None   # '-inf' на тишине → None (иначе -Infinity в JSON)
+        return None, None
     return round(i, 1), round(tp, 1)
 
 
@@ -202,90 +199,49 @@ def _delta(a, b):
     return f"{b - a:+.1f}"
 
 
-def print_spectrum(before, after):
-    """Спектр по 7 полосам до → после (dB)."""
-    print("СПЕКТР ПО ПОЛОСАМ (dB, метод bandpass 1 октава), до → после:")
+def run_normal(ffmpeg, ffprobe, args, cfg):
+    """Один файл: bass shelf → treble shelf → loudnorm. Спектр по 7 полосам до/после."""
+    out = args.output
+    dur = ffprobe_duration(ffprobe, args.input)
+    chain = build_chain(cfg)
+    before = spectrum(ffmpeg, args.input)
+    # «после» меряем на полках БЕЗ loudnorm — иначе общий подъём громкости сместил бы
+    # все полосы разом и замаскировал бы чистый эффект полок (голос «уехал» бы вместе).
+    after = spectrum(ffmpeg, args.input, pre=build_shelves(cfg))
+    i0, tp0 = measure_loudness(ffmpeg, args.input, cfg)
+    apply_af(ffmpeg, args.input, out, chain)
+    i1, tp1 = measure_loudness(ffmpeg, out, cfg)
+
+    audio = {
+        "duration": round(dur, 2),
+        "chain": chain,
+        "spectrum_before": before, "spectrum_after": after,
+        "loudness_before": i0, "loudness_after": i1,
+        "peak_before": tp0, "peak_after": tp1,
+    }
+    wrote = write_pipeline(out, audio)
+
+    print("=== ОТЧЁТ audio_clean (полки против перекоса спектра) ===")
+    print(f"Конфиг:      {cfg['_config_status']}")
+    print(f"Цепочка:     {chain}")
+    print("СПЕКТР ПО ПОЛОСАМ (dB, bandpass 1 октава), исходник → после полок (до loudnorm):")
     for c in BANDS:
         b, a = before.get(c), after.get(c)
         mark = ""
         if c == 120:
-            mark = "  ← был самый громкий (раздутый низ)"
+            mark = "  ← горб низа (давим полкой)"
         elif c == 800:
-            mark = "  ← голос"
+            mark = "  ← голос (не трогаем)"
         elif c in (5000, 10000):
-            mark = "  ← верх (поднимаем)"
+            mark = "  ← верх (поднимаем полкой)"
         print(f"  {c:>5} Гц:  {_fmt(b):>7} → {_fmt(a):>7}   (Δ {_delta(b, a)} dB){mark}")
-
-
-def process_variant(ffmpeg, src, out, cfg, boost):
-    """Собрать один вариант, вернуть отчёт (спектр после, громкость, пик)."""
-    chain = build_chain(cfg, boost)
-    apply_af(ffmpeg, src, out, chain)
-    after = spectrum(ffmpeg, out)
-    i1, tp1 = measure_loudness(ffmpeg, out, cfg)
-    return {"chain": chain, "after": after, "loudness": i1, "peak": tp1}
-
-
-def run_normal(ffmpeg, ffprobe, args, cfg):
-    """Один файл по конфигу (top_boost on → hp_eq, off → hp). Спектр до/после."""
-    out = args.output
-    dur = ffprobe_duration(ffprobe, args.input)
-    boost = str(cfg["top_boost"]).strip().lower() not in ("off", "false", "no", "0", "")
-    before = spectrum(ffmpeg, args.input)
-    i0, tp0 = measure_loudness(ffmpeg, args.input, cfg)
-    r = process_variant(ffmpeg, args.input, out, cfg, boost)
-
-    audio = {
-        "duration": round(dur, 2),
-        "chain": "hp_eq" if boost else "hp",
-        "spectrum_before": before, "spectrum_after": r["after"],
-        "loudness_before": i0, "loudness_after": r["loudness"],
-        "peak_before": tp0, "peak_after": r["peak"],
-    }
-    wrote = write_pipeline(out, audio)
-
-    print("=== ОТЧЁТ audio_clean (эквалайзер против перекоса спектра) ===")
-    print(f"Конфиг:      {cfg['_config_status']}")
-    print(f"Цепочка:     {r['chain']}")
-    print_spectrum(before, r["after"])
-    print(f"Громкость:   {_fmt(i0)} → {_fmt(r['loudness'])} LUFS  (цель {cfg['target_lufs']:g})")
-    print(f"Пик:         {_fmt(tp0)} → {_fmt(r['peak'])} dBTP  (потолок {cfg['true_peak_db']:g})")
-    if r["peak"] is not None and r["peak"] > cfg["true_peak_db"]:
-        print(f"⚠️ Пик итога {r['peak']} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг.")
+    print(f"Громкость:   {_fmt(i0)} → {_fmt(i1)} LUFS  (цель {cfg['target_lufs']:g})")
+    print(f"Пик:         {_fmt(tp0)} → {_fmt(tp1)} dBTP  (потолок {cfg['true_peak_db']:g})")
+    if tp1 is not None and tp1 > cfg["true_peak_db"]:
+        print(f"⚠️ Пик итога {tp1} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг.")
     print(f"Файл:        {out}")
     print(f"pipeline.json: {'обновлён' if wrote else 'не трогал (нет current с этим id)'}")
     print("audio =", json.dumps(audio, ensure_ascii=False))
-    print("=" * 60)
-
-
-def run_variants(ffmpeg, args, cfg):
-    """Два файла: hp (только highpass) и hp_eq (highpass + подъём верха). Спектр до/после."""
-    out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
-    before = spectrum(ffmpeg, args.input)
-    i0, tp0 = measure_loudness(ffmpeg, args.input, cfg)
-
-    print("=== ДВА ВАРИАНТА (30 с, послушать и выбрать) ===")
-    print(f"Конфиг:      {cfg['_config_status']}")
-    print(f"Исходник:    громкость {_fmt(i0)} LUFS, пик {_fmt(tp0)} dBTP")
-    print("Спектр исходника (dB):", json.dumps(before, ensure_ascii=False))
-    print("-" * 60)
-    variants = [("hp", "только highpass 100", False),
-                ("hp_eq", "highpass 100 + подъём верха 3кГц/+5", True)]
-    rows = []
-    for key, title, boost in variants:
-        out = os.path.join(out_dir, f"clip_{key}.mp4")
-        r = process_variant(ffmpeg, args.input, out, cfg, boost)
-        print(f"[{title}]")
-        print(f"  цепочка: {r['chain']}")
-        print_spectrum(before, r["after"])
-        print(f"  громкость {_fmt(i0)} → {_fmt(r['loudness'])} LUFS; пик {_fmt(tp0)} → {_fmt(r['peak'])} dBTP")
-        if r["peak"] is not None and r["peak"] > cfg["true_peak_db"]:
-            print(f"  ⚠️ пик {r['peak']} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг")
-        print(f"  файл: {out}")
-        print("-" * 60)
-        rows.append({"variant": key, "loudness": r["loudness"], "peak": r["peak"],
-                     "spectrum_after": r["after"]})
-    print("variants =", json.dumps({"spectrum_before": before, "results": rows}, ensure_ascii=False))
     print("=" * 60)
 
 
@@ -293,8 +249,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="outputs/ready/[id]/clip.mp4")
     ap.add_argument("--output", required=True, help="outputs/ready/[id]/clip_audio_clean.mp4")
-    ap.add_argument("--variants", action="store_true",
-                    help="два файла: hp и hp_eq (на сравнение)")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -308,10 +262,10 @@ def main():
     out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
     os.makedirs(out_dir, exist_ok=True)
 
-    if args.variants:
-        run_variants(ffmpeg, args, cfg)
-    else:
+    try:
         run_normal(ffmpeg, ffprobe, args, cfg)
+    except RuntimeError as e:
+        die(f"{e} → blocked", 2)
 
 
 if __name__ == "__main__":

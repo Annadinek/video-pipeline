@@ -1,9 +1,8 @@
 name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
-# scripts/audio_clean.py → в логе отчёт (спектр по полосам), файл(ы) в артефактах.
-# variants=false: один файл clip_audio_clean.mp4 (цепочка по presets/audio.json).
-# variants=true:  два файла clip_hp / clip_hp_eq (только highpass vs highpass+подъём верха).
+# scripts/audio_clean.py (полки bass/treble → loudnorm) → в логе спектр по 7
+# полосам до/после, готовый файл clip_audio_clean.mp4 в артефактах.
 on:
   workflow_dispatch:
     inputs:
@@ -21,11 +20,6 @@ on:
         required: false
         default: '30'
         type: string
-      variants:
-        description: 'Два варианта: hp и hp_eq (highpass vs highpass+подъём верха)'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   audiofix:
@@ -62,27 +56,18 @@ jobs:
             --start "$START" --seconds "$SECONDS_ARG"
 
       - name: Обрабатываем звук
-        env:
-          VARIANTS: ${{ inputs.variants }}   # через env — без подстановки в shell
         run: |
           set -o pipefail
-          if [ "$VARIANTS" = "true" ]; then
-            python scripts/audio_clean.py \
-              --input outputs/audiofix/clip.mp4 \
-              --output outputs/audiofix/clip.mp4 \
-              --variants | tee outputs/audiofix/report.txt
-          else
-            python scripts/audio_clean.py \
-              --input outputs/audiofix/clip.mp4 \
-              --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
-          fi
+          python scripts/audio_clean.py \
+            --input outputs/audiofix/clip.mp4 \
+            --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
 
-      - name: Отдаём файл(ы) на послушать
+      - name: Отдаём файл на послушать
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audio-fix
           path: |
-            outputs/audiofix/clip_*.mp4
+            outputs/audiofix/clip_audio_clean.mp4
             outputs/audiofix/report.txt
           if-no-files-found: ignore
