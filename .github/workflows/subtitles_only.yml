@@ -1,0 +1,41 @@
+# subtitles_only.yml — вшить ТОЛЬКО субтитры в видео и прислать в бот на проверку.
+name: subtitles-only
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: "Ссылка или ID видео YouTube"
+        required: true
+        default: "NtX08PXq7i8"
+concurrency:
+  group: subtitles-only
+  cancel-in-progress: false
+jobs:
+  subs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 320
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      VIDEO_ID: ${{ github.event.inputs.video }}
+      WHISPER_MODEL: medium
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          python3 -m pip install --quiet -U --pre yt-dlp
+          python3 -m pip install --quiet requests faster-whisper google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+          if ! command -v deno >/dev/null 2>&1; then
+            curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
+            echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          fi
+          mkdir -p work
+          if [ -n "${YT_COOKIES}" ]; then printf '%s' "$YT_COOKIES" > work/cookies.txt; fi
+      - name: Вшить субтитры и отправить в бот
+        run: python3 scripts/subtitles_only.py
