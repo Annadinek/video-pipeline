@@ -1,65 +1,69 @@
 #!/usr/bin/env python3
 """
-audio_clean.py — обработка звука ролика. ЧИСТИМ, ПОТОМ ГРОМКОСТЬ.
+audio_clean.py — обработка звука ролика. Цепочка из четырёх шагов (решение Анны):
+  1) DeepFilterNet — нейросетевой шумодав РЕЧИ (обучен на речи в реальном шуме);
+  2) подмешать исходник обратно — чтобы вернуть немного воздуха комнаты
+     (иначе «тихий подвал», неживо): amix 85% очищенного + 15% исходного;
+  3) equalizer f=4000 (узко, +4 дБ) — вернуть верх, который DeepFilterNet
+     подрезает (голос «как из трубы»); узкая полоса, чтобы не тянуть шипение;
+  4) loudnorm I=-14:LRA=11:TP=-1 — громкость.
 
-Цепочка по решению Анны (гулкость и голос в одной полосе — резать нельзя):
-  1) highpass 80 Гц         — срез самых низов (рокот/гул), голос не задевает;
-  2) arnndn с моделью       — нейросетевой шумодав речи (rnnoise): давит фон,
-                              голос сохраняет (в отличие от выреза полос);
-  3) громкость ФИКСИРОВАННЫМ гейном (volume) до target_lufs (умолч. -14),
-     ограничен так, чтобы истинный пик остался ниже true_peak_db.
+Ни bass/treble, ни afftdn/arnndn (RNNoise — телефонное качество, даёт «колодец»),
+ни настройки под тип шума. Шум убирает только DeepFilterNet; equalizer здесь не
+шумодав, а узкий возврат верха голоса.
 
-Вырез полос 200–400 Гц УБРАН: он попадал в основной тон голоса, звук «из колодца».
+DeepFilterNet — не ffmpeg-фильтр, а отдельная программа (`deepFilter`), поэтому
+проход такой:
+  1. извлекаем звук в wav 48 кГц (это же исходник для подмеса);
+  2. deepFilter -m presets/deepfilternet/DeepFilterNet3 → чистый wav;
+  3. amix (очищенный + исходник) → equalizer 4000 → loudnorm, возврат
+     дорожки в mp4 (видео копируем) — одним фильтрографом.
 
-Модели rnnoise — в presets/rnnoise/*.rnnn (GregorR/rnnoise-models, public domain).
-Для речи + шум записи (комната) по README лучшие: sh (somnolent-hogwash) и
-bd (beguiling-drafter). Выбор — режимом --models (сравнить все) + на слух Анны.
-
-Если ffmpeg без фильтра arnndn или модели нет — откат на afftdn (с предупреждением).
-
-Итог собирается ОДНИМ проходом ffmpeg (одно сжатие). Фон в самом тихом участке
-меряем по окнам на каждом шаге (исходник → highpass → шумодав → громкость).
+Зависимости (совместимые версии, ставятся в workflow): deepfilternet==0.5.6,
+torch==2.0.1, torchaudio==2.0.2 (свежий torchaudio убрал torchaudio.backend и
+ломает импорт). CPU, быстро: 30 с звука ≈ 2 с.
 
 Вход:  outputs/ready/[id]/clip.mp4
 Выход: outputs/ready/[id]/clip_audio_clean.mp4  (один файл)
-Режим --models: по файлу clip_<модель>.mp4 на каждую модель, для выбора.
+
+Отчёт цифрами: фон в тихом месте, уровень голоса, полоса 4–8 кГц (верх голоса,
+относительно общего уровня) — на исходнике, после DeepFilterNet и в итоге;
+сколько секунд считал DeepFilterNet.
 
 Настройки — presets/audio.json (нет файла/сломан → умолчания, не падаем):
-  highpass_hz     срез низов, Гц (умолч. 80)
-  denoise         on/off
-  denoise_model   имя .rnnn в presets/rnnoise/ (умолч. sh.rnnn)
-  target_lufs     целевая громкость (умолч. -14)
-  true_peak_db    потолок пика (безопасно -1)
-
-Только Python 3, ffmpeg (желательно с фильтром arnndn) и стандартная библиотека.
+  denoise_model   папка модели в presets/deepfilternet/ (умолч. DeepFilterNet3)
+  dry_mix         доля исходника в подмесе, 0..1 (умолч. 0.15)
+  target_lufs, lra, true_peak_db   loudnorm (умолч. -14 / 11 / -1)
 """
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "logs")
 CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
-MODELS_DIR = os.path.join(ROOT, "presets", "rnnoise")
+MODELS_DIR = os.path.join(ROOT, "presets", "deepfilternet")
 
 DEFAULTS = {
-    "highpass_hz": 80,             # срез низов, голос не задевает
-    "denoise": "on",
-    "denoise_model": "sh.rnnn",    # somnolent-hogwash — речь + шум записи (по README)
-    "target_lufs": -14,           # норма площадок; решение Анны
-    "true_peak_db": -1,           # безопасно -1 (0 клиппит)
+    "denoise_model": "DeepFilterNet3",
+    "dry_mix": 0.15,
+    "target_lufs": -14,
+    "lra": 11,
+    "true_peak_db": -1,
 }
-NUMERIC_KEYS = ["highpass_hz", "target_lufs", "true_peak_db"]
-LOUDNORM_LRA = 11        # для замера громкости (loudnorm print, без применения)
-FLOOR_WIN_SEC = 0.5      # окно замера фона (с); в семплы переводим по частоте файла
-FLOOR_SILENCE_DB = -120  # ниже этого — цифровая тишина, не фон комнаты
-PEAK_HEADROOM_DB = 1.0   # запас по пику под фиксированный гейн
-AFFTDN_FALLBACK = "afftdn=nr=10:nf=-28"  # откат, если arnndn/модель недоступны
+NUMERIC_KEYS = ["dry_mix", "target_lufs", "lra", "true_peak_db"]
+FLOOR_WIN_SEC = 0.5
+FLOOR_SILENCE_DB = -120
+# Полоса «верха голоса» для замера (Гц): что DeepFilterNet подрезает, equalizer возвращает.
+BAND_LO_HZ = 4000
+BAND_HI_HZ = 8000
 
 
 def die(msg, code):
@@ -95,6 +99,9 @@ def load_config():
             cfg[k] = float(cfg[k])
         except (TypeError, ValueError):
             cfg[k] = float(DEFAULTS[k])
+    # доля подмеса — только 0..1 (нельзя отрицательную или больше 100%)
+    if not 0.0 <= cfg["dry_mix"] <= 1.0:
+        cfg["dry_mix"] = float(DEFAULTS["dry_mix"])
     cfg["_config_status"] = status
     return cfg
 
@@ -104,55 +111,20 @@ def run(cmd):
     return p.returncode, p.stdout, p.stderr
 
 
-def _pre(af):
-    return (af + ",") if af else ""
-
-
-def _esc_path(p):
-    """Экранировать метасимволы filtergraph в пути к модели (: , ' \\ [ ] ; пробел)."""
-    return re.sub(r"([\\':,\[\]; ])", r"\\\1", p)
-
-
-def has_arnndn(ffmpeg):
-    """Есть ли в ffmpeg фильтр arnndn."""
-    _, out, err = run([ffmpeg, "-hide_banner", "-filters"])
-    return "arnndn" in (out + err)
-
-
-def list_models():
-    """Список моделей presets/rnnoise/*.rnnn (по имени)."""
-    if not os.path.isdir(MODELS_DIR):
-        return []
-    return sorted(f for f in os.listdir(MODELS_DIR) if f.endswith(".rnnn"))
-
-
-def denoise_filter(cfg, model, arnndn_ok):
-    """(фильтр, метка, откат?). arnndn с моделью, если есть и файл, и фильтр; иначе afftdn."""
-    if str(cfg["denoise"]).strip().lower() == "off":
-        return "", "выкл", False
-    path = os.path.join(MODELS_DIR, model)
-    if arnndn_ok and os.path.exists(path):
-        return f"arnndn=m={_esc_path(path)}", model, False
-    reason = "нет модели" if not os.path.exists(path) else "ffmpeg без arnndn"
-    return AFFTDN_FALLBACK, f"afftdn (откат: {reason})", True
-
-
 def ffprobe_duration(ffprobe, path):
-    rc, out, err = run([
-        ffprobe, "-v", "error", "-show_entries", "format=duration",
-        "-of", "csv=p=0", path,
-    ])
+    rc, out, err = run([ffprobe, "-v", "error", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", path])
     if rc != 0 or not out.strip():
         raise RuntimeError(f"ffprobe не смог прочитать длительность {path}: {err.strip()}")
-    return float(out.strip())
+    try:
+        return float(out.strip())
+    except ValueError:
+        raise RuntimeError(f"ffprobe отдал нечисловую длительность '{out.strip()}' для {path}")
 
 
 def ffprobe_sample_rate(ffprobe, path):
-    """Частота дискретизации звука (Гц). Не смогли прочитать → 48000."""
-    _, out, _ = run([
-        ffprobe, "-v", "error", "-select_streams", "a:0",
-        "-show_entries", "stream=sample_rate", "-of", "csv=p=0", path,
-    ])
+    _, out, _ = run([ffprobe, "-v", "error", "-select_streams", "a:0",
+                     "-show_entries", "stream=sample_rate", "-of", "csv=p=0", path])
     try:
         sr = int(out.strip())
         return sr if sr > 0 else 48000
@@ -160,115 +132,113 @@ def ffprobe_sample_rate(ffprobe, path):
         return 48000
 
 
-def loudnorm_measure(ffmpeg, path, cfg, pre=""):
-    """Замер громкости: loudnorm 1-й проход (print json). pre — фильтры до замера."""
-    chain = _pre(pre) + (
-        f"loudnorm=I={cfg['target_lufs']}:TP={cfg['true_peak_db']}:LRA={LOUDNORM_LRA}"
-        ":print_format=json"
-    )
-    _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-af", chain, "-f", "null", "-"])
+def measure_loudness(ffmpeg, path, cfg):
+    """(I, TP) файла. Тишина/-inf → (None, None)."""
+    chain = (f"loudnorm=I={cfg['target_lufs']:g}:TP={cfg['true_peak_db']:g}"
+             f":LRA={cfg['lra']:g}:print_format=json")
+    _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-vn", "-af", chain, "-f", "null", "-"])
     start, end = err.rfind("{"), err.rfind("}")
     if start == -1 or end == -1 or end < start:
-        raise RuntimeError(f"loudnorm не отдал измерения: {err.strip()[-400:]}")
-    return json.loads(err[start:end + 1])
+        return None, None
+    try:
+        m = json.loads(err[start:end + 1])
+        i, tp = float(m["input_i"]), float(m["input_tp"])
+    except (ValueError, KeyError):
+        return None, None
+    if not (math.isfinite(i) and math.isfinite(tp)):
+        return None, None
+    return round(i, 1), round(tp, 1)
 
 
-def measure_loudness(ffmpeg, path, cfg, pre=""):
-    """Вернуть (I, TP, LRA). pre — фильтры до замера."""
-    m = loudnorm_measure(ffmpeg, path, cfg, pre)
-    return (round(float(m["input_i"]), 1),
-            round(float(m["input_tp"]), 1),
-            round(float(m["input_lra"]), 1))
-
-
-def window_rms(ffmpeg, path, win_samples, pre=""):
-    """RMS каждого окна ~win_samples (dB), по порядку, с префиксом фильтров pre."""
-    af = _pre(pre) + (
-        f"asetnsamples=n={win_samples}:p=0,astats=metadata=1:reset=1,"
-        "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-"
-    )
-    _, out, err = run([ffmpeg, "-hide_banner", "-i", path, "-af", af, "-f", "null", "-"])
+def noise_floor(ffmpeg, ffprobe, path):
+    """Фон в самом тихом окне ~0.5 с (dB): RMS по окнам (astats), минимум реального."""
+    win = max(1, round(FLOOR_WIN_SEC * ffprobe_sample_rate(ffprobe, path)))
+    _, out, err = run([
+        ffmpeg, "-hide_banner", "-i", path, "-vn",
+        "-af", (f"asetnsamples=n={win}:p=0,astats=metadata=1:reset=1,"
+                "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-"),
+        "-f", "null", "-",
+    ])
     vals = []
     for x in re.findall(r"RMS_level=(\S+)", out + "\n" + err):
         try:
-            vals.append(float(x))
+            v = float(x)
         except ValueError:
-            vals.append(float("-inf"))
-    return vals
+            continue
+        if v > FLOOR_SILENCE_DB:
+            vals.append(v)
+    return round(min(vals), 1) if vals else None
 
 
-def floor_pick(vals):
-    """(номер, значение dB) самого тихого РЕАЛЬНОГО окна (цифровую тишину пропускаем)."""
-    best_i, best_v = None, None
-    for i, v in enumerate(vals):
-        if v > FLOOR_SILENCE_DB and (best_v is None or v < best_v):
-            best_i, best_v = i, v
-    return best_i, (round(best_v, 1) if best_v is not None else None)
-
-
-def floor_at(vals, idx):
-    """Фон в окне №idx (dB). Нет окна/цифровая тишина → None."""
-    if idx is None or idx >= len(vals):
+def _rms_overall(ffmpeg, path, pre_af=""):
+    """Общий RMS-уровень дорожки (dB) через astats. pre_af — фильтр перед замером."""
+    af = "astats=measure_perchannel=none:measure_overall=RMS_level"
+    if pre_af:
+        af = pre_af + "," + af
+    _, out, err = run([ffmpeg, "-hide_banner", "-i", path, "-vn", "-af", af, "-f", "null", "-"])
+    vals = re.findall(r"RMS level dB:\s*(-?\d+(?:\.\d+)?)", out + "\n" + err)
+    try:
+        return float(vals[-1]) if vals else None
+    except ValueError:
         return None
-    v = vals[idx]
-    return round(v, 1) if v > FLOOR_SILENCE_DB else None
 
 
-def apply_af(ffmpeg, src, out, af):
-    """Собрать выход одним проходом: цепочка фильтров af, видео копируем."""
+def band_ratio(ffmpeg, path):
+    """
+    Верх голоса: уровень полосы 4–8 кГц ОТНОСИТЕЛЬНО общего уровня (dB).
+    Считаем относительно, чтобы число не зависело от громкости: чем ниже, тем
+    сильнее подрезан верх («как из трубы»); выше — верх на месте.
+    """
+    overall = _rms_overall(ffmpeg, path)
+    band = _rms_overall(ffmpeg, path, pre_af=f"highpass=f={BAND_LO_HZ},lowpass=f={BAND_HI_HZ}")
+    if overall is None or band is None:
+        return None
+    return round(band - overall, 1)
+
+
+def extract_wav(ffmpeg, src, out_wav):
+    """Звук из mp4 в wav 48 кГц моно (для DeepFilterNet)."""
+    rc, _, err = run([ffmpeg, "-y", "-hide_banner", "-i", src, "-vn",
+                      "-ar", "48000", "-ac", "1", out_wav])
+    if rc != 0:
+        raise RuntimeError(f"не извлёк звук: {err.strip()[-300:]}")
+
+
+def run_deepfilter(deepfilter, model_dir, in_wav, out_dir):
+    """DeepFilterNet: чистит in_wav → wav в out_dir. Возвращает (путь, секунды)."""
+    os.makedirs(out_dir, exist_ok=True)
+    t0 = time.monotonic()
+    rc, _, err = run([deepfilter, "-m", model_dir, "-o", out_dir, in_wav])
+    dt = round(time.monotonic() - t0, 1)
+    if rc != 0:
+        raise RuntimeError(f"DeepFilterNet не отработал: {err.strip()[-400:]}")
+    wavs = sorted(f for f in os.listdir(out_dir) if f.endswith(".wav"))
+    if not wavs:
+        raise RuntimeError("DeepFilterNet не создал выходной wav")
+    return os.path.join(out_dir, wavs[0]), dt
+
+
+def mix_eq_loudnorm_remux(ffmpeg, video_src, clean_wav, dry_wav, out, cfg):
+    """
+    Собрать финал одним фильтрографом:
+      очищенный + исходник (amix, вес 1-dry_mix / dry_mix, normalize=0) →
+      equalizer 4000 (узкий возврат верха) → loudnorm → видео из оригинала (копия).
+    clean_wav — выход DeepFilterNet (вход 1), dry_wav — исходный звук (вход 2).
+    """
+    dry = cfg["dry_mix"]
+    wet = 1.0 - dry
+    fc = (
+        f"[1:a][2:a]amix=inputs=2:weights={wet:g} {dry:g}:normalize=0,"
+        f"equalizer=f={BAND_LO_HZ}:width_type=o:width=1.5:g=4,"
+        f"loudnorm=I={cfg['target_lufs']:g}:LRA={cfg['lra']:g}:TP={cfg['true_peak_db']:g}[aout]"
+    )
     rc, _, err = run([
-        ffmpeg, "-y", "-hide_banner", "-i", src, "-af", af,
+        ffmpeg, "-y", "-hide_banner", "-i", video_src, "-i", clean_wav, "-i", dry_wav,
+        "-filter_complex", fc, "-map", "0:v:0", "-map", "[aout]",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
     ])
     if rc != 0:
-        raise RuntimeError(f"сборка звука не удалась ({af}): {err.strip()[-300:]}")
-
-
-def source_context(ffmpeg, ffprobe, src, cfg):
-    """Замеры исходника, не зависящие от модели (считаем один раз на весь прогон)."""
-    win = max(1, round(FLOOR_WIN_SEC * ffprobe_sample_rate(ffprobe, src)))
-    idx, floor_src = floor_pick(window_rms(ffmpeg, src, win))
-    i_src, tp_src, _ = measure_loudness(ffmpeg, src, cfg)
-    return {"win": win, "idx": idx, "floor_src": floor_src, "i_src": i_src, "tp_src": tp_src}
-
-
-def process(ffmpeg, src, out, cfg, ctx, arnndn_ok, model=None):
-    """
-    highpass → шумодав → фикс-гейн. Фон по шагам — анализом с префиксом фильтров, итог
-    одним проходом. ctx — замеры исходника (source_context). Возвращает цифры.
-    """
-    model = model or cfg["denoise_model"]
-    win, idx = ctx["win"], ctx["idx"]
-
-    def floor(pre):
-        return floor_at(window_rms(ffmpeg, src, win, pre), idx)
-
-    hp = f"highpass=f={cfg['highpass_hz']:g}"
-    dn_filter, dn_label, fallback = denoise_filter(cfg, model, arnndn_ok)
-    clean = hp + (f",{dn_filter}" if dn_filter else "")
-
-    floor_hp = floor(hp)
-    floor_dn = floor(clean)
-
-    # громкость: фиксированный гейн по чистому сигналу, с запасом по пику
-    i_pre, tp_pre, _ = measure_loudness(ffmpeg, src, cfg, pre=clean)
-    gain_loud = cfg["target_lufs"] - i_pre
-    gain_peak = cfg["true_peak_db"] - tp_pre - PEAK_HEADROOM_DB
-    gain = round(min(gain_loud, gain_peak), 1)
-    limited_by = "пик" if gain_peak <= gain_loud else "громкость"
-
-    apply_af(ffmpeg, src, out, f"{clean},volume={gain}dB")
-    floor_out = floor(f"{clean},volume={gain}dB")
-    i_out, tp_out, lra_out = measure_loudness(ffmpeg, out, cfg)
-
-    return {
-        "floor_src": ctx["floor_src"], "floor_hp": floor_hp,
-        "floor_dn": floor_dn, "floor_out": floor_out,
-        "denoise": dn_label, "fallback": fallback, "gain_db": gain, "gain_limited_by": limited_by,
-        "peak_over": tp_out > cfg["true_peak_db"],
-        "loudness_before": ctx["i_src"], "loudness_after": i_out,
-        "peak_before": ctx["tp_src"], "peak_after": tp_out, "lra_after": lra_out,
-    }
+        raise RuntimeError(f"подмес/верх/громкость/сборка не удалась: {err.strip()[-300:]}")
 
 
 def write_pipeline(out_path, audio):
@@ -295,111 +265,95 @@ def _fmt(v):
     return "—" if v is None else f"{v}"
 
 
-def _delta(a, b):
-    if a is None or b is None:
-        return "—"
-    return f"{b - a:+.1f} dB"
-
-
-def run_normal(ffmpeg, ffprobe, args, cfg):
-    """Один файл: highpass → arnndn(модель) → громкость. Фон по шагам."""
+def run_normal(ffmpeg, ffprobe, deepfilter, args, cfg, work_dir):
     out = args.output
-    dur = ffprobe_duration(ffprobe, args.input)
-    ctx = source_context(ffmpeg, ffprobe, args.input, cfg)
-    r = process(ffmpeg, args.input, out, cfg, ctx, has_arnndn(ffmpeg))
+    model_dir = os.path.join(MODELS_DIR, str(cfg["denoise_model"]))
+    if not os.path.isdir(model_dir):
+        die(f"нет модели {model_dir} → blocked", 2)
 
-    fs, fh, fd, fo = r["floor_src"], r["floor_hp"], r["floor_dn"], r["floor_out"]
+    dur = ffprobe_duration(ffprobe, args.input)
+    in_wav = os.path.join(work_dir, "in.wav")
+    extract_wav(ffmpeg, args.input, in_wav)
+
+    # исходник (до всего)
+    floor0 = noise_floor(ffmpeg, ffprobe, in_wav)
+    voice0, _ = measure_loudness(ffmpeg, in_wav, cfg)
+    band0 = band_ratio(ffmpeg, in_wav)
+
+    # DeepFilterNet
+    enhanced, dfn_sec = run_deepfilter(deepfilter, model_dir, in_wav,
+                                       os.path.join(work_dir, "dfn"))
+
+    # после шумодава (тут виден «подвал» и подрезанный верх)
+    floor1 = noise_floor(ffmpeg, ffprobe, enhanced)
+    band1 = band_ratio(ffmpeg, enhanced)
+
+    # подмес исходника + возврат верха + громкость + сборка
+    mix_eq_loudnorm_remux(ffmpeg, args.input, enhanced, in_wav, out, cfg)
+
+    # итог (воздух вернулся подмесом, верх — эквалайзером)
+    floor2 = noise_floor(ffmpeg, ffprobe, out)
+    band2 = band_ratio(ffmpeg, out)
+    i2, tp2 = measure_loudness(ffmpeg, out, cfg)
+
+    dry = cfg["dry_mix"]
     audio = {
         "duration": round(dur, 2),
-        "noise_floor_src": fs, "noise_floor_highpass": fh,
-        "noise_floor_denoise": fd, "noise_floor_final": fo,
-        "gain_db": r["gain_db"],
-        "loudness_before": r["loudness_before"], "loudness_after": r["loudness_after"],
-        "peak_before": r["peak_before"], "peak_after": r["peak_after"],
-        "lra_after": r["lra_after"], "denoise": r["denoise"],
+        "denoise": str(cfg["denoise_model"]),
+        "dfn_seconds": dfn_sec,
+        "dry_mix": round(dry, 3),
+        "noise_floor_before": floor0, "noise_floor_dfn": floor1, "noise_floor_after": floor2,
+        "band48_before": band0, "band48_dfn": band1, "band48_after": band2,
+        "voice_before": voice0,
+        "loudness_final": i2, "peak_final": tp2,
     }
     wrote = write_pipeline(out, audio)
 
-    print("=== ОТЧЁТ audio_clean (highpass → arnndn → громкость) ===")
+    print("=== ОТЧЁТ audio_clean (DeepFilterNet → подмес → верх → громкость) ===")
     print(f"Конфиг:      {cfg['_config_status']}")
-    print("ФОН В САМОМ ТИХОМ УЧАСТКЕ по шагам (тише = ниже число):")
-    print(f"  исходник:              {_fmt(fs)} dB")
-    print(f"  после highpass {cfg['highpass_hz']:g} Гц:  {_fmt(fh)} dB   ({_delta(fs, fh)})")
-    print(f"  после шумодава:        {_fmt(fd)} dB   ({_delta(fh, fd)})")
-    print(f"  после громкости:       {_fmt(fo)} dB   ({_delta(fd, fo)})")
-    print(f"ИТОГ фон: {_fmt(fs)} → {_fmt(fo)} dB   ({_delta(fs, fo)} к исходнику)")
-    print(f"Шумодав:     {r['denoise']}" + ("  ⚠️ ОТКАТ" if r["fallback"] else ""))
-    print(f"Гейн:        {r['gain_db']:+g} dB (фиксированный, ограничен: {r['gain_limited_by']})")
-    print(f"Громкость:   {r['loudness_before']} → {r['loudness_after']} LUFS  (цель {cfg['target_lufs']:g})")
-    print(f"Пик:         {r['peak_before']} → {r['peak_after']} dBTP  (потолок {cfg['true_peak_db']:g})")
-    if r["peak_over"]:
-        print(f"⚠️ Пик итога выше потолка {cfg['true_peak_db']:g} — возможен клиппинг.")
+    print(f"Модель:      {cfg['denoise_model']}")
+    print(f"Подмес исходника (dry_mix): {dry:g}  (очищенного {1 - dry:g} / исходного {dry:g})")
+    print(f"DeepFilterNet считал: {dfn_sec} с (звука {round(dur, 1)} с)")
+    print("Три точки: исходник → после DeepFilterNet → итог")
+    print(f"ФОН в тихом месте:      {_fmt(floor0)} → {_fmt(floor1)} → {_fmt(floor2)} dB")
+    print(f"ВЕРХ 4–8 кГц (к общему): {_fmt(band0)} → {_fmt(band1)} → {_fmt(band2)} dB")
+    print(f"УРОВЕНЬ ГОЛОСА (исходник): {_fmt(voice0)} LUFS")
+    print(f"Громкость (итог):   {_fmt(i2)} LUFS  (цель {cfg['target_lufs']:g})")
+    print(f"Пик (итог):         {_fmt(tp2)} dBTP  (потолок {cfg['true_peak_db']:g})")
+    if tp2 is not None and tp2 > cfg["true_peak_db"]:
+        print(f"⚠️ Пик итога {tp2} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг.")
     print(f"Файл:        {out}")
     print(f"pipeline.json: {'обновлён' if wrote else 'не трогал (нет current с этим id)'}")
     print("audio =", json.dumps(audio, ensure_ascii=False))
     print("=" * 55)
 
 
-def run_models(ffmpeg, ffprobe, args, cfg):
-    """Сравнить все модели presets/rnnoise/*.rnnn — по файлу на каждую, фон по шагам."""
-    out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
-    models = list_models()
-    if not models:
-        die("нет моделей в presets/rnnoise/*.rnnn → blocked", 2)
-    arnndn_ok = has_arnndn(ffmpeg)
-    ctx = source_context(ffmpeg, ffprobe, args.input, cfg)
-
-    print("=== СРАВНЕНИЕ МОДЕЛЕЙ arnndn (30 с, выбрать лучшую для речи) ===")
-    print(f"Конфиг:      {cfg['_config_status']}")
-    print(f"Цепочка: highpass {cfg['highpass_hz']:g} Гц → arnndn(модель) → гейн до {cfg['target_lufs']:g} LUFS")
-    if str(cfg["denoise"]).strip().lower() == "off":
-        print("⚠️ denoise=off — шумодав выключен, файлы моделей будут одинаковыми. Включи denoise.")
-    if not arnndn_ok:
-        print("⚠️ ffmpeg без фильтра arnndn — сравнить нельзя, всё уходит в afftdn.")
-    print("-" * 64)
-    rows = []
-    for m in models:
-        out = os.path.join(out_dir, f"clip_{m[:-5]}.mp4")   # убрать .rnnn
-        r = process(ffmpeg, args.input, out, cfg, ctx, arnndn_ok, model=m)
-        drop = (round(r["floor_out"] - r["floor_src"], 1)
-                if r["floor_src"] is not None and r["floor_out"] is not None else None)
-        print(f"[{m}]")
-        print(f"  фон: исходник {_fmt(r['floor_src'])} → highpass {_fmt(r['floor_hp'])} "
-              f"→ arnndn {_fmt(r['floor_dn'])} → громкость {_fmt(r['floor_out'])} dB "
-              f"(итог {_fmt(drop)} dB)")
-        print(f"  громкость {r['loudness_after']} LUFS; пик {r['peak_after']} dBTP; гейн {r['gain_db']:+g} dB")
-        print(f"  файл: {out}")
-        print("-" * 64)
-        rows.append({"model": m, "floor_src": r["floor_src"], "floor_final": r["floor_out"],
-                     "drop_db": drop, "loudness": r["loudness_after"], "peak": r["peak_after"]})
-    print("По README репо для речи + шум записи (комната) лучшие: sh, bd. Голос — на слух Анны.")
-    print("models =", json.dumps(rows, ensure_ascii=False))
-    print("=" * 64)
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True, help="outputs/ready/[id]/clip.mp4")
     ap.add_argument("--output", required=True, help="outputs/ready/[id]/clip_audio_clean.mp4")
-    ap.add_argument("--models", action="store_true",
-                    help="сравнить все модели presets/rnnoise/*.rnnn (по файлу на модель)")
     args = ap.parse_args()
 
     cfg = load_config()
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
+    deepfilter = shutil.which("deepFilter")
     if not ffmpeg or not ffprobe:
         die("нет ffmpeg/ffprobe → blocked", 3)
+    if not deepfilter:
+        die("нет deepFilter (pip install deepfilternet==0.5.6 torch==2.0.1 torchaudio==2.0.2) → blocked", 3)
     if not os.path.exists(args.input):
         die(f"нет входного файла: {args.input}", 2)
 
     out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
     os.makedirs(out_dir, exist_ok=True)
+    work_dir = os.path.join(out_dir, "work")
+    os.makedirs(work_dir, exist_ok=True)
 
-    if args.models:
-        run_models(ffmpeg, ffprobe, args, cfg)
-    else:
-        run_normal(ffmpeg, ffprobe, args, cfg)
+    try:
+        run_normal(ffmpeg, ffprobe, deepfilter, args, cfg, work_dir)
+    except RuntimeError as e:
+        die(f"{e} → blocked", 2)
 
 
 if __name__ == "__main__":

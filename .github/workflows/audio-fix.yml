@@ -1,9 +1,9 @@
 name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
-# scripts/audio_clean.py → в логе отчёт цифрами, файл(ы) в артефактах.
-# models=false: один файл clip_audio_clean.mp4 (цепочка highpass → arnndn → громкость).
-# models=true:  по файлу на каждую модель rnnoise (clip_bd/cb/lq/mp/sh) — выбрать лучшую.
+# scripts/audio_clean.py (DeepFilterNet → подмес исходника → верх → loudnorm) →
+# в логе цифры (фон, голос, верх 4–8 кГц, время), готовый файл
+# clip_audio_clean.mp4 в артефактах.
 on:
   workflow_dispatch:
     inputs:
@@ -21,11 +21,6 @@ on:
         required: false
         default: '30'
         type: string
-      models:
-        description: 'Сравнить все модели rnnoise (по файлу на модель)'
-        required: false
-        default: false
-        type: boolean
 
 jobs:
   audiofix:
@@ -49,6 +44,14 @@ jobs:
           python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
           ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
 
+      # DeepFilterNet: строго совместимые версии (свежий torchaudio ломает импорт).
+      # Модель лежит в репозитории (presets/deepfilternet/), скачивать не нужно.
+      - name: Ставим DeepFilterNet (CPU)
+        run: |
+          python -m pip install deepfilternet==0.5.6
+          python -m pip install torch==2.0.1 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
+          deepFilter --help >/dev/null 2>&1 && echo "deepFilter ок" || echo "::warning::deepFilter не импортируется"
+
       - name: Скачиваем отрезок (только для теста)
         env:
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
@@ -62,27 +65,18 @@ jobs:
             --start "$START" --seconds "$SECONDS_ARG"
 
       - name: Обрабатываем звук
-        env:
-          MODELS: ${{ inputs.models }}   # через env — без подстановки в shell
         run: |
           set -o pipefail
-          if [ "$MODELS" = "true" ]; then
-            python scripts/audio_clean.py \
-              --input outputs/audiofix/clip.mp4 \
-              --output outputs/audiofix/clip.mp4 \
-              --models | tee outputs/audiofix/report.txt
-          else
-            python scripts/audio_clean.py \
-              --input outputs/audiofix/clip.mp4 \
-              --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
-          fi
+          python scripts/audio_clean.py \
+            --input outputs/audiofix/clip.mp4 \
+            --output outputs/audiofix/clip_audio_clean.mp4 | tee outputs/audiofix/report.txt
 
-      - name: Отдаём файл(ы) на послушать
+      - name: Отдаём файл на послушать
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: audio-fix
           path: |
-            outputs/audiofix/clip_*.mp4
+            outputs/audiofix/clip_audio_clean.mp4
             outputs/audiofix/report.txt
           if-no-files-found: ignore
