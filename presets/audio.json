@@ -1,7 +1,10 @@
 {
-  "highpass_hz": 80,
-  "denoise": "on",
-  "denoise_model": "sh.rnnn",
+  "highpass_hz": 100,
+  "top_boost": "on",
+  "top_boost_hz": 3000,
+  "top_boost_width": 2,
+  "top_boost_gain": 5,
   "target_lufs": -14,
+  "lra": 11,
   "true_peak_db": -1
 }

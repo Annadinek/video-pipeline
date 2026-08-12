@@ -1,9 +1,9 @@
 name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
-# scripts/audio_clean.py → в логе отчёт цифрами, файл(ы) в артефактах.
-# models=false: один файл clip_audio_clean.mp4 (цепочка highpass → arnndn → громкость).
-# models=true:  по файлу на каждую модель rnnoise (clip_bd/cb/lq/mp/sh) — выбрать лучшую.
+# scripts/audio_clean.py → в логе отчёт (спектр по полосам), файл(ы) в артефактах.
+# variants=false: один файл clip_audio_clean.mp4 (цепочка по presets/audio.json).
+# variants=true:  два файла clip_hp / clip_hp_eq (только highpass vs highpass+подъём верха).
 on:
   workflow_dispatch:
     inputs:
@@ -21,8 +21,8 @@ on:
         required: false
         default: '30'
         type: string
-      models:
-        description: 'Сравнить все модели rnnoise (по файлу на модель)'
+      variants:
+        description: 'Два варианта: hp и hp_eq (highpass vs highpass+подъём верха)'
         required: false
         default: false
         type: boolean
@@ -63,14 +63,14 @@ jobs:
 
       - name: Обрабатываем звук
         env:
-          MODELS: ${{ inputs.models }}   # через env — без подстановки в shell
+          VARIANTS: ${{ inputs.variants }}   # через env — без подстановки в shell
         run: |
           set -o pipefail
-          if [ "$MODELS" = "true" ]; then
+          if [ "$VARIANTS" = "true" ]; then
             python scripts/audio_clean.py \
               --input outputs/audiofix/clip.mp4 \
               --output outputs/audiofix/clip.mp4 \
-              --models | tee outputs/audiofix/report.txt
+              --variants | tee outputs/audiofix/report.txt
           else
             python scripts/audio_clean.py \
               --input outputs/audiofix/clip.mp4 \
