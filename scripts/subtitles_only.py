@@ -22,11 +22,16 @@ def download(vid):
     url = vid if "://" in vid else f"https://www.youtube.com/watch?v={vid}"
     os.makedirs("work", exist_ok=True)
     raw = "work/raw.mp4"
-    cmd = ["yt-dlp", "-f", "bv*+ba/b", "--merge-output-format", "mp4",
-           "--remote-components", "ejs:github", "--retries", "5", "--fragment-retries", "5",
-           "-o", "work/raw.%(ext)s", url]
+    base = ["yt-dlp", "--remote-components", "ejs:github",
+            "--extractor-args", "youtube:player_client=web_safari,web,mweb,tv",
+            "--retries", "5", "--fragment-retries", "5"]
     if os.path.exists("work/cookies.txt"):
-        cmd += ["--cookies", "work/cookies.txt"]
+        base += ["--cookies", "work/cookies.txt"]
+    # лог доступных форматов (чтобы видеть максимальное разрешение)
+    subprocess.run(base + ["-F", url])
+    # берём максимальное разрешение (sort by res), mp4
+    cmd = base + ["-S", "res,ext:mp4:m4a", "-f", "bv*+ba/b",
+                  "--merge-output-format", "mp4", "-o", "work/raw.%(ext)s", url]
     for a in range(1, 4):
         if subprocess.run(cmd).returncode == 0 and os.path.exists(raw):
             return raw
