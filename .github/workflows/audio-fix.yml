@@ -1,8 +1,9 @@
 name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
-# scripts/audio_clean.py (DeepFilterNet → loudnorm) → в логе цифры (фон/голос
-# до/после, время), готовый файл clip_audio_clean.mp4 в артефактах.
+# scripts/audio_clean.py (DeepFilterNet → подмес исходника → верх → loudnorm) →
+# в логе цифры (фон, голос, верх 4–8 кГц, время), готовый файл
+# clip_audio_clean.mp4 в артефактах.
 on:
   workflow_dispatch:
     inputs:

@@ -1,5 +1,6 @@
 {
   "denoise_model": "DeepFilterNet3",
+  "dry_mix": 0.15,
   "target_lufs": -14,
   "lra": 11,
   "true_peak_db": -1
