@@ -1,9 +1,5 @@
 {
-  "bass_gain": -12,
-  "bass_hz": 200,
-  "bass_width": 1.2,
-  "treble_gain": 8,
-  "treble_hz": 3500,
+  "denoise_model": "DeepFilterNet3",
   "target_lufs": -14,
   "lra": 11,
   "true_peak_db": -1

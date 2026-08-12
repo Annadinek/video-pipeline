@@ -1,8 +1,8 @@
 name: audio-fix
 
 # Тест звука по кнопке: ссылка YouTube → качается кусок → прогоняется
-# scripts/audio_clean.py (полки bass/treble → loudnorm) → в логе спектр по 7
-# полосам до/после, готовый файл clip_audio_clean.mp4 в артефактах.
+# scripts/audio_clean.py (DeepFilterNet → loudnorm) → в логе цифры (фон/голос
+# до/после, время), готовый файл clip_audio_clean.mp4 в артефактах.
 on:
   workflow_dispatch:
     inputs:
@@ -42,6 +42,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs
           ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      # DeepFilterNet: строго совместимые версии (свежий torchaudio ломает импорт).
+      # Модель лежит в репозитории (presets/deepfilternet/), скачивать не нужно.
+      - name: Ставим DeepFilterNet (CPU)
+        run: |
+          python -m pip install deepfilternet==0.5.6
+          python -m pip install torch==2.0.1 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
+          deepFilter --help >/dev/null 2>&1 && echo "deepFilter ок" || echo "::warning::deepFilter не импортируется"
 
       - name: Скачиваем отрезок (только для теста)
         env:

@@ -1,35 +1,31 @@
 #!/usr/bin/env python3
 """
-audio_clean.py — обработка звука ролика.
+audio_clean.py — обработка звука ролика. РОВНО ДВЕ ВЕЩИ (решение Анны):
+  1) DeepFilterNet — нейросетевой шумодав РЕЧИ (обучен на речи в реальном шуме);
+  2) loudnorm I=-14:LRA=11:TP=-1 — громкость.
 
-Причина «бочки» у Анны — НЕ шум, а ПЕРЕКОС СПЕКТРА (эффект близости микрофона):
-горб на низах (~120 Гц) громче голоса, верх провален на ~14 дБ. highpass не
-помогал: он режет НИЖЕ точки среза, а горб на 120 Гц выше неё. Шумодавы тоже —
-ровного шума нет. Лечим ПОЛОЧНЫМИ фильтрами (bass/treble shelf): давят/поднимают
-всю область за частотой.
+Ни bass/treble, ни equalizer, ни afftdn/arnndn (RNNoise — телефонное качество,
+даёт «колодец»), ни настройки под тип шума. DeepFilterNet сам разбирает любой фон.
 
-Команда (решение Анны, проверено ею по спектру):
-  bass=g=-12:f=200:width_type=o:width=1.2  → treble=g=8:f=3500  → loudnorm
+DeepFilterNet — не ffmpeg-фильтр, а отдельная программа (`deepFilter`), поэтому
+проход такой:
+  1. извлекаем звук в wav 48 кГц;
+  2. deepFilter -m presets/deepfilternet/DeepFilterNet3 → чистый wav;
+  3. loudnorm + возврат дорожки в mp4 (видео копируем).
 
-bass shelf −12 дБ ниже 200 Гц — гасит раздутый горб (низ −8 дБ, не −1).
-treble shelf +8 дБ выше 3.5 кГц — поднимает верх (+7 дБ). Голос (~800 Гц) не тронут.
-loudnorm I=-14:LRA=11:TP=-1 — громкость.
-
-Никаких highpass, arnndn, узкого equalizer. Модели arnndn (presets/rnnoise/) не
-удалены, но не используются.
+Зависимости (совместимые версии, ставятся в workflow): deepfilternet==0.5.6,
+torch==2.0.1, torchaudio==2.0.2 (свежий torchaudio убрал torchaudio.backend и
+ломает импорт). CPU, быстро: 30 с звука ≈ 2 с.
 
 Вход:  outputs/ready/[id]/clip.mp4
 Выход: outputs/ready/[id]/clip_audio_clean.mp4  (один файл)
 
-Отчёт: спектр по 7 полосам (40/120/300/800/2000/5000/10000 Гц) до и после —
-видно, как полки давят низ и поднимают верх, а голос стоит на месте.
+Отчёт цифрами: фон в тихом месте до/после, уровень голоса до/после, сколько
+секунд считал DeepFilterNet.
 
 Настройки — presets/audio.json (нет файла/сломан → умолчания, не падаем):
-  bass_gain, bass_hz, bass_width   низкая полка (умолч. -12 / 200 Гц / 1.2 октавы)
-  treble_gain, treble_hz           высокая полка (умолч. +8 / 3500 Гц)
+  denoise_model   папка модели в presets/deepfilternet/ (умолч. DeepFilterNet3)
   target_lufs, lra, true_peak_db   loudnorm (умолч. -14 / 11 / -1)
-
-Только Python 3, ffmpeg и стандартная библиотека.
 """
 
 import argparse
@@ -40,24 +36,22 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "logs")
 CONFIG_PATH = os.path.join(ROOT, "presets", "audio.json")
+MODELS_DIR = os.path.join(ROOT, "presets", "deepfilternet")
 
 DEFAULTS = {
-    "bass_gain": -12,      # низкая полка: гасим раздутый низ, дБ
-    "bass_hz": 200,        # частота низкой полки, Гц
-    "bass_width": 1.2,     # ширина перехода, октавы
-    "treble_gain": 8,      # высокая полка: поднимаем верх, дБ
-    "treble_hz": 3500,     # частота высокой полки, Гц
-    "target_lufs": -14,    # целевая громкость
-    "lra": 11,             # целевой разброс loudnorm
-    "true_peak_db": -1,    # потолок пика
+    "denoise_model": "DeepFilterNet3",
+    "target_lufs": -14,
+    "lra": 11,
+    "true_peak_db": -1,
 }
-NUMERIC_KEYS = ["bass_gain", "bass_hz", "bass_width", "treble_gain", "treble_hz",
-                "target_lufs", "lra", "true_peak_db"]
-BANDS = [40, 120, 300, 800, 2000, 5000, 10000]  # полосы замера спектра, Гц
+NUMERIC_KEYS = ["target_lufs", "lra", "true_peak_db"]
+FLOOR_WIN_SEC = 0.5
+FLOOR_SILENCE_DB = -120
 
 
 def die(msg, code):
@@ -103,10 +97,8 @@ def run(cmd):
 
 
 def ffprobe_duration(ffprobe, path):
-    rc, out, err = run([
-        ffprobe, "-v", "error", "-show_entries", "format=duration",
-        "-of", "csv=p=0", path,
-    ])
+    rc, out, err = run([ffprobe, "-v", "error", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", path])
     if rc != 0 or not out.strip():
         raise RuntimeError(f"ffprobe не смог прочитать длительность {path}: {err.strip()}")
     try:
@@ -115,44 +107,18 @@ def ffprobe_duration(ffprobe, path):
         raise RuntimeError(f"ffprobe отдал нечисловую длительность '{out.strip()}' для {path}")
 
 
-def build_shelves(cfg):
-    """Полки без громкости: низкая полка → высокая полка (чистый эффект спектра)."""
-    return (f"bass=g={cfg['bass_gain']:g}:f={cfg['bass_hz']:g}"
-            f":width_type=o:width={cfg['bass_width']:g},"
-            f"treble=g={cfg['treble_gain']:g}:f={cfg['treble_hz']:g}")
-
-
-def build_chain(cfg):
-    """Полная цепочка: полки → loudnorm."""
-    return (build_shelves(cfg) +
-            f",loudnorm=I={cfg['target_lufs']:g}:LRA={cfg['lra']:g}:TP={cfg['true_peak_db']:g}")
-
-
-def apply_af(ffmpeg, src, out, af):
-    """Собрать выход одним проходом: цепочка фильтров af, видео копируем."""
-    rc, _, err = run([
-        ffmpeg, "-y", "-hide_banner", "-i", src, "-af", af,
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
-    ])
-    if rc != 0:
-        raise RuntimeError(f"сборка звука не удалась ({af}): {err.strip()[-300:]}")
-
-
-def band_level(ffmpeg, path, center, pre=""):
-    """Средняя громкость в полосе 1 октава вокруг center (dB). pre — фильтры до замера."""
-    af = ((pre + ",") if pre else "") + f"bandpass=f={center:g}:width_type=o:w=1,volumedetect"
-    _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-vn", "-af", af, "-f", "null", "-"])
-    m = re.search(r"mean_volume:\s*([-\d.]+)\s*dB", err)
-    return round(float(m.group(1)), 1) if m else None
-
-
-def spectrum(ffmpeg, path, pre=""):
-    """Уровень по 7 полосам (dB). pre — фильтры до замера (напр. полки без loudnorm)."""
-    return {c: band_level(ffmpeg, path, c, pre) for c in BANDS}
+def ffprobe_sample_rate(ffprobe, path):
+    _, out, _ = run([ffprobe, "-v", "error", "-select_streams", "a:0",
+                     "-show_entries", "stream=sample_rate", "-of", "csv=p=0", path])
+    try:
+        sr = int(out.strip())
+        return sr if sr > 0 else 48000
+    except (ValueError, AttributeError):
+        return 48000
 
 
 def measure_loudness(ffmpeg, path, cfg):
-    """(I, TP) файла — для отчёта громкости и пика до/после. Тишина/-inf → (None, None)."""
+    """(I, TP) файла. Тишина/-inf → (None, None)."""
     chain = (f"loudnorm=I={cfg['target_lufs']:g}:TP={cfg['true_peak_db']:g}"
              f":LRA={cfg['lra']:g}:print_format=json")
     _, _, err = run([ffmpeg, "-hide_banner", "-i", path, "-vn", "-af", chain, "-f", "null", "-"])
@@ -167,6 +133,60 @@ def measure_loudness(ffmpeg, path, cfg):
     if not (math.isfinite(i) and math.isfinite(tp)):
         return None, None
     return round(i, 1), round(tp, 1)
+
+
+def noise_floor(ffmpeg, ffprobe, path):
+    """Фон в самом тихом окне ~0.5 с (dB): RMS по окнам (astats), минимум реального."""
+    win = max(1, round(FLOOR_WIN_SEC * ffprobe_sample_rate(ffprobe, path)))
+    _, out, err = run([
+        ffmpeg, "-hide_banner", "-i", path, "-vn",
+        "-af", (f"asetnsamples=n={win}:p=0,astats=metadata=1:reset=1,"
+                "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-"),
+        "-f", "null", "-",
+    ])
+    vals = []
+    for x in re.findall(r"RMS_level=(\S+)", out + "\n" + err):
+        try:
+            v = float(x)
+        except ValueError:
+            continue
+        if v > FLOOR_SILENCE_DB:
+            vals.append(v)
+    return round(min(vals), 1) if vals else None
+
+
+def extract_wav(ffmpeg, src, out_wav):
+    """Звук из mp4 в wav 48 кГц моно (для DeepFilterNet)."""
+    rc, _, err = run([ffmpeg, "-y", "-hide_banner", "-i", src, "-vn",
+                      "-ar", "48000", "-ac", "1", out_wav])
+    if rc != 0:
+        raise RuntimeError(f"не извлёк звук: {err.strip()[-300:]}")
+
+
+def run_deepfilter(deepfilter, model_dir, in_wav, out_dir):
+    """DeepFilterNet: чистит in_wav → wav в out_dir. Возвращает (путь, секунды)."""
+    os.makedirs(out_dir, exist_ok=True)
+    t0 = time.monotonic()
+    rc, _, err = run([deepfilter, "-m", model_dir, "-o", out_dir, in_wav])
+    dt = round(time.monotonic() - t0, 1)
+    if rc != 0:
+        raise RuntimeError(f"DeepFilterNet не отработал: {err.strip()[-400:]}")
+    wavs = sorted(f for f in os.listdir(out_dir) if f.endswith(".wav"))
+    if not wavs:
+        raise RuntimeError("DeepFilterNet не создал выходной wav")
+    return os.path.join(out_dir, wavs[0]), dt
+
+
+def loudnorm_remux(ffmpeg, video_src, audio_wav, out, cfg):
+    """Громкость на очищенной дорожке + возврат видео из оригинала (видео копируем)."""
+    af = f"loudnorm=I={cfg['target_lufs']:g}:LRA={cfg['lra']:g}:TP={cfg['true_peak_db']:g}"
+    rc, _, err = run([
+        ffmpeg, "-y", "-hide_banner", "-i", video_src, "-i", audio_wav,
+        "-map", "0:v:0", "-map", "1:a:0", "-af", af,
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out,
+    ])
+    if rc != 0:
+        raise RuntimeError(f"громкость/сборка не удалась: {err.strip()[-300:]}")
 
 
 def write_pipeline(out_path, audio):
@@ -199,50 +219,56 @@ def _delta(a, b):
     return f"{b - a:+.1f}"
 
 
-def run_normal(ffmpeg, ffprobe, args, cfg):
-    """Один файл: bass shelf → treble shelf → loudnorm. Спектр по 7 полосам до/после."""
+def run_normal(ffmpeg, ffprobe, deepfilter, args, cfg, work_dir):
     out = args.output
+    model_dir = os.path.join(MODELS_DIR, str(cfg["denoise_model"]))
+    if not os.path.isdir(model_dir):
+        die(f"нет модели {model_dir} → blocked", 2)
+
     dur = ffprobe_duration(ffprobe, args.input)
-    chain = build_chain(cfg)
-    before = spectrum(ffmpeg, args.input)
-    # «после» меряем на полках БЕЗ loudnorm — иначе общий подъём громкости сместил бы
-    # все полосы разом и замаскировал бы чистый эффект полок (голос «уехал» бы вместе).
-    after = spectrum(ffmpeg, args.input, pre=build_shelves(cfg))
-    i0, tp0 = measure_loudness(ffmpeg, args.input, cfg)
-    apply_af(ffmpeg, args.input, out, chain)
-    i1, tp1 = measure_loudness(ffmpeg, out, cfg)
+    in_wav = os.path.join(work_dir, "in.wav")
+    extract_wav(ffmpeg, args.input, in_wav)
+
+    # до
+    floor0 = noise_floor(ffmpeg, ffprobe, in_wav)
+    voice0, _ = measure_loudness(ffmpeg, in_wav, cfg)
+
+    # DeepFilterNet
+    enhanced, dfn_sec = run_deepfilter(deepfilter, model_dir, in_wav,
+                                       os.path.join(work_dir, "dfn"))
+
+    # после (шумодав, до громкости)
+    floor1 = noise_floor(ffmpeg, ffprobe, enhanced)
+    voice1, _ = measure_loudness(ffmpeg, enhanced, cfg)
+
+    # громкость + сборка
+    loudnorm_remux(ffmpeg, args.input, enhanced, out, cfg)
+    i2, tp2 = measure_loudness(ffmpeg, out, cfg)
 
     audio = {
         "duration": round(dur, 2),
-        "chain": chain,
-        "spectrum_before": before, "spectrum_after": after,
-        "loudness_before": i0, "loudness_after": i1,
-        "peak_before": tp0, "peak_after": tp1,
+        "denoise": str(cfg["denoise_model"]),
+        "dfn_seconds": dfn_sec,
+        "noise_floor_before": floor0, "noise_floor_after": floor1,
+        "voice_before": voice0, "voice_after": voice1,
+        "loudness_final": i2, "peak_final": tp2,
     }
     wrote = write_pipeline(out, audio)
 
-    print("=== ОТЧЁТ audio_clean (полки против перекоса спектра) ===")
+    print("=== ОТЧЁТ audio_clean (DeepFilterNet → громкость) ===")
     print(f"Конфиг:      {cfg['_config_status']}")
-    print(f"Цепочка:     {chain}")
-    print("СПЕКТР ПО ПОЛОСАМ (dB, bandpass 1 октава), исходник → после полок (до loudnorm):")
-    for c in BANDS:
-        b, a = before.get(c), after.get(c)
-        mark = ""
-        if c == 120:
-            mark = "  ← горб низа (давим полкой)"
-        elif c == 800:
-            mark = "  ← голос (не трогаем)"
-        elif c in (5000, 10000):
-            mark = "  ← верх (поднимаем полкой)"
-        print(f"  {c:>5} Гц:  {_fmt(b):>7} → {_fmt(a):>7}   (Δ {_delta(b, a)} dB){mark}")
-    print(f"Громкость:   {_fmt(i0)} → {_fmt(i1)} LUFS  (цель {cfg['target_lufs']:g})")
-    print(f"Пик:         {_fmt(tp0)} → {_fmt(tp1)} dBTP  (потолок {cfg['true_peak_db']:g})")
-    if tp1 is not None and tp1 > cfg["true_peak_db"]:
-        print(f"⚠️ Пик итога {tp1} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг.")
+    print(f"Модель:      {cfg['denoise_model']}")
+    print(f"DeepFilterNet считал: {dfn_sec} с (звука {round(dur, 1)} с)")
+    print(f"ФОН в тихом месте:  {_fmt(floor0)} → {_fmt(floor1)} dB   ({_delta(floor0, floor1)} dB)")
+    print(f"УРОВЕНЬ ГОЛОСА:     {_fmt(voice0)} → {_fmt(voice1)} LUFS  ({_delta(voice0, voice1)} dB)")
+    print(f"Громкость (итог):   {_fmt(i2)} LUFS  (цель {cfg['target_lufs']:g})")
+    print(f"Пик (итог):         {_fmt(tp2)} dBTP  (потолок {cfg['true_peak_db']:g})")
+    if tp2 is not None and tp2 > cfg["true_peak_db"]:
+        print(f"⚠️ Пик итога {tp2} выше потолка {cfg['true_peak_db']:g} — возможен клиппинг.")
     print(f"Файл:        {out}")
     print(f"pipeline.json: {'обновлён' if wrote else 'не трогал (нет current с этим id)'}")
     print("audio =", json.dumps(audio, ensure_ascii=False))
-    print("=" * 60)
+    print("=" * 55)
 
 
 def main():
@@ -254,16 +280,21 @@ def main():
     cfg = load_config()
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
+    deepfilter = shutil.which("deepFilter")
     if not ffmpeg or not ffprobe:
         die("нет ffmpeg/ffprobe → blocked", 3)
+    if not deepfilter:
+        die("нет deepFilter (pip install deepfilternet==0.5.6 torch==2.0.1 torchaudio==2.0.2) → blocked", 3)
     if not os.path.exists(args.input):
         die(f"нет входного файла: {args.input}", 2)
 
     out_dir = os.path.dirname(os.path.abspath(args.output)) or "."
     os.makedirs(out_dir, exist_ok=True)
+    work_dir = os.path.join(out_dir, "work")
+    os.makedirs(work_dir, exist_ok=True)
 
     try:
-        run_normal(ffmpeg, ffprobe, args, cfg)
+        run_normal(ffmpeg, ffprobe, deepfilter, args, cfg, work_dir)
     except RuntimeError as e:
         die(f"{e} → blocked", 2)
 

@@ -5,27 +5,32 @@
 - outputs/ready/[id]/clip.mp4
 
 ## ЧТО ДЕЛАЮ
-Запускаю `scripts/audio_clean.py --input ... --output ...`. Проблема звука Анны —
-не шум, а ПЕРЕКОС СПЕКТРА (эффект близости микрофона): горб на низах (~120 Гц)
-громче голоса, верх провален. Лечим ПОЛОЧНЫМИ фильтрами (не highpass, не шумодав:
-highpass режет ниже среза и горб на 120 Гц не трогает; ровного шума нет).
-Параметры — в `presets/audio.json`. Цепочка:
-1. `bass` shelf −12 дБ ниже ~200 Гц (ширина 1.2 октавы) — гасит раздутый низ.
-2. `treble` shelf +8 дБ выше ~3.5 кГц — поднимает провален­ный верх.
-3. `loudnorm` I=-14:LRA=11:TP=-1 — громкость.
+Запускаю `scripts/audio_clean.py --input ... --output ...`. РОВНО ДВЕ ВЕЩИ
+(решение Анны):
+1. **DeepFilterNet** — нейросетевой шумодав РЕЧИ (обучен на речи в реальном шуме,
+   MIT, бесплатно, на CPU быстро: 30 с звука ≈ 2 с). Модель лежит в репозитории
+   (`presets/deepfilternet/DeepFilterNet3/`), скачивать не нужно.
+2. `loudnorm` I=-14:LRA=11:TP=-1 — громкость.
 
-Голос (~800 Гц) полки не трогают. Никаких highpass / arnndn / Demucs / узкого
-equalizer / выреза полос. Модели arnndn лежат в `presets/rnnoise/`, но не
-используются. Исходник `clip.mp4` не трогаю.
+Никаких bass/treble/equalizer/afftdn/arnndn и никакой настройки под тип шума:
+arnndn (RNNoise) обучен на телефонном качестве и даёт «колодец», а полки/вырезы
+полос портят голос. DeepFilterNet сам разбирает любой фон. Модели arnndn лежат в
+`presets/rnnoise/`, но не используются. Исходник `clip.mp4` не трогаю.
+
+DeepFilterNet — не ffmpeg-фильтр, а отдельная программа (`deepFilter`), поэтому
+проход: извлекаю звук в wav 48 кГц → `deepFilter` чистит → `loudnorm` и возврат
+дорожки в mp4 (видео копирую). Зависимости ставит workflow: `deepfilternet==0.5.6`,
+`torch==2.0.1`, `torchaudio==2.0.2` (свежий torchaudio ломает импорт).
 
 ## ЧТО ОТДАЮ
 - outputs/ready/[id]/clip_audio_clean.mp4
 - запись в state/pipeline.json (`current.audio`):
   - audio.duration
-  - audio.chain  (строка фильтров)
-  - audio.spectrum_before / spectrum_after  (уровень по 7 полосам, dB)
-  - audio.loudness_before / loudness_after
-  - audio.peak_before / peak_after
+  - audio.denoise  (модель DeepFilterNet)
+  - audio.dfn_seconds  (сколько секунд считал шумодав)
+  - audio.noise_floor_before / noise_floor_after  (фон в тихом месте, dB)
+  - audio.voice_before / voice_after  (уровень голоса, LUFS)
+  - audio.loudness_final / peak_final
 
 ## КОГДА СТОП
 - нет ffmpeg → blocked
