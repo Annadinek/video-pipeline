@@ -1,0 +1,21 @@
+# music_samples.yml — присылает Анне в бот варианты фоновой музыки (сэмплы 45 сек)
+# на выбор. Драматичная, низкие тона, спокойная. Ничего не публикует.
+name: music-samples
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  samples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet requests
+      - name: Прислать варианты музыки в бот
+        run: python3 scripts/music_samples.py
