@@ -62,6 +62,12 @@ STAGES = [
     "06-publish",
 ]
 
+# ДВА КОНВЕЙЕРА, ОДИН РЕПОЗИТОРИЙ (см. CLAUDE.md). loop.py ведёт ТОЛЬКО конвейер
+# YouTube. Второй конвейер (Instagram/TikTok) — всё с приставкой reels_/reels- —
+# со своим запуском. Защита: любые reels-этапы отфильтровываются из STAGES, чтобы
+# этот цикл их никогда не подхватил, даже если кто-то допишет их в список.
+STAGES = [s for s in STAGES if not s.startswith("reels-")]
+
 REQUIRED = [
     "VIZARDAI_API_KEY",
     "YT_CLIENT_ID",
