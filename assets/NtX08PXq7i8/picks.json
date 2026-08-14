@@ -1,0 +1,25 @@
+{
+  "covers": [
+    {
+      "frame": "assets/NtX08PXq7i8/cand_03.jpg",
+      "face_frac": 0.24,
+      "fx": 0.34,
+      "fy": 0.37,
+      "lines": [["ЗАЧЕМ МЫ", "white"], ["ЖИВЁМ?", "yellow"]]
+    },
+    {
+      "frame": "assets/NtX08PXq7i8/cand_07.jpg",
+      "face_frac": 0.25,
+      "fx": 0.36,
+      "fy": 0.37,
+      "lines": [["В ЧЁМ СМЫСЛ", "white"], ["ЖИЗНИ?", "yellow"]]
+    },
+    {
+      "frame": "assets/NtX08PXq7i8/cand_01.jpg",
+      "face_frac": 0.27,
+      "fx": 0.34,
+      "fy": 0.38,
+      "lines": [["ОПЫТ —", "white"], ["ТО, ЧТО ДО УМА", "yellow"]]
+    }
+  ]
+}

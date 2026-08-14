@@ -30,8 +30,8 @@ FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 W, H = 1280, 720
 YELLOW = (255, 205, 0)
 DARK = (20, 20, 20)
-FACE_OUT = 0.42
-FACE_AT_Y = 0.34
+FACE_OUT = 0.34
+FACE_AT_Y = 0.38
 
 
 # ---------- режим frames ----------
