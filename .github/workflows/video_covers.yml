@@ -32,22 +32,22 @@ jobs:
           sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
           python3 -m pip install --quiet -U --pre yt-dlp
-          python3 -m pip install --quiet requests pillow opencv-python-headless
+          python3 -m pip install --quiet requests pillow numpy
           if ! command -v deno >/dev/null 2>&1; then
             curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
             echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
           fi
           mkdir -p work
           if [ -n "${YT_COOKIES}" ]; then printf '%s' "$YT_COOKIES" > work/cookies.txt; fi
-      - name: Сделать обложки
+      - name: Собрать кадры-кандидаты
         run: python3 scripts/video_covers.py "$VIDEO_ID"
-      - name: Закоммитить обложки
+      - name: Закоммитить кандидаты
         if: always()
         run: |
           git config user.name "video-pipeline-bot"
           git config user.email "bot@users.noreply.github.com"
           git add assets 2>/dev/null || true
-          git commit -m "обложки: кадры-кандидаты и 3 обложки для $VIDEO_ID" || echo "нечего коммитить"
+          git commit -m "обложки: кадры-кандидаты для $VIDEO_ID" || echo "нечего коммитить"
           for i in 1 2 3 4; do
             git pull --rebase origin main && git push origin main && break || sleep $((i*3))
           done
