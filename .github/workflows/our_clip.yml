@@ -46,7 +46,8 @@ jobs:
           # ffmpeg + шрифт для субтитров + системные либы для OpenCV
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core libgl1 libglib2.0-0
           python3 -m pip install --quiet -U --pre yt-dlp
-          python3 -m pip install --quiet requests faster-whisper opencv-python-headless numpy \
+          # OpenCV 5.x убрал CascadeClassifier/cv2.data — берём 4.x (там слежение по лицу).
+          python3 -m pip install --quiet requests faster-whisper "opencv-python-headless<5" numpy \
             google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
           if ! command -v deno >/dev/null 2>&1; then
             curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
