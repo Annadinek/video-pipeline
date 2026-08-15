@@ -3,22 +3,25 @@
     {
       "frame": "assets/NtX08PXq7i8/cand_24.jpg",
       "face_frac": 0.24,
+      "face_out": 0.24,
       "fx": 0.33,
-      "fy": 0.38,
+      "fy": 0.40,
       "lines": [["ЗАЧЕМ МЫ", "white"], ["ЖИВЁМ?", "yellow"]]
     },
     {
       "frame": "assets/NtX08PXq7i8/cand_16.jpg",
       "face_frac": 0.23,
+      "face_out": 0.24,
       "fx": 0.34,
-      "fy": 0.38,
+      "fy": 0.40,
       "lines": [["В ЧЁМ СМЫСЛ", "white"], ["ЖИЗНИ?", "yellow"]]
     },
     {
       "frame": "assets/NtX08PXq7i8/cand_24.jpg",
       "face_frac": 0.24,
+      "face_out": 0.24,
       "fx": 0.33,
-      "fy": 0.38,
+      "fy": 0.40,
       "lines": [["ОПЫТ —", "white"], ["ТО, ЧТО ДО УМА", "yellow"]]
     }
   ]

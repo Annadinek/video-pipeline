@@ -134,10 +134,10 @@ def make_contact_sheet(picks, out_path, cols=4, cw=360, ch=270):
 
 # ---------- режим covers ----------
 
-def load_bg(path, fx, fy, face_frac):
+def load_bg(path, fx, fy, face_frac, face_out=FACE_OUT):
     im = Image.open(path).convert("RGB")
     w, h = im.size
-    scale = FACE_OUT / max(face_frac, 0.08)
+    scale = face_out / max(face_frac, 0.08)
     crop_h = int(round(H / scale))
     crop_w = int(round(crop_h * 16 / 9))
     if crop_w > w:
@@ -171,8 +171,8 @@ def fit_font(text, max_w, start=118):
     return ImageFont.truetype(FONT_PATH, 46)
 
 
-def draw_cover(frame, lines, face_frac, fx, fy, out):
-    im = load_bg(frame, fx, fy, face_frac)
+def draw_cover(frame, lines, face_frac, fx, fy, out, face_out=FACE_OUT):
+    im = load_bg(frame, fx, fy, face_frac, face_out)
     d = ImageDraw.Draw(im)
     margin = 64
     max_w = W - margin * 2
@@ -206,7 +206,8 @@ def make_covers(picks_path):
         lines = [(t, s) for t, s in item["lines"]]
         draw_cover(item["frame"], lines, item.get("face_frac", 0.22),
                    item.get("fx", 0.5), item.get("fy", 0.42),
-                   os.path.join(out, f"cover_{i}.jpg"))
+                   os.path.join(out, f"cover_{i}.jpg"),
+                   item.get("face_out", FACE_OUT))
 
 
 def main():
