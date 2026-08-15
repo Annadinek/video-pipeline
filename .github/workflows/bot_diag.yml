@@ -1,0 +1,18 @@
+# bot_diag.yml — диагностика бота (getMe, getWebhookInfo). Ничего не меняет.
+name: bot-diag
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Диагностика бота
+        run: python3 scripts/bot_diag.py
