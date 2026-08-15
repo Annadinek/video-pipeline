@@ -49,6 +49,9 @@ jobs:
           # OpenCV 5.x убрал CascadeClassifier/cv2.data — берём 4.x (там слежение по лицу).
           python3 -m pip install --quiet requests faster-whisper "opencv-python-headless<5" numpy \
             google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+          # DeepFilterNet (звук): строго совместимые версии, модель уже в репозитории.
+          python3 -m pip install --quiet deepfilternet==0.5.6
+          python3 -m pip install --quiet torch==2.0.1 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
           if ! command -v deno >/dev/null 2>&1; then
             curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
             echo "$HOME/.deno/bin" >> "$GITHUB_PATH"

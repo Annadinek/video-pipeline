@@ -39,6 +39,14 @@ def cut_segment(raw):
     return seg
 
 
+def run_step(script, inp, out):
+    """Запустить наш этап (audio_clean.py / color.py) с --input/--output."""
+    print(f"этап {script}: {inp} → {out}")
+    subprocess.run(["python3", os.path.join("scripts", script),
+                    "--input", inp, "--output", out], check=True)
+    return out
+
+
 def crop_window(seg):
     """Окно 9:16 по лицу. Если слежение недоступно — центр (громко сообщаем)."""
     width, height = vc.ffprobe_dimensions(seg)
@@ -58,23 +66,28 @@ def crop_window(seg):
 def main():
     if not VIDEO:
         raise SystemExit("Не задан VIDEO_ID.")
+    # Цепочка: скачать → кусок (копия) → audio_clean → color → нарезка+субтитры.
     raw = so.download(VIDEO)
-    seg = cut_segment(raw)
+    seg = cut_segment(raw)                                   # копия потока
+    # 1) ЗВУК: DeepFilterNet + подмес 0.15 + верх + loudnorm −14 (presets/audio.json).
+    aclean = run_step("audio_clean.py", seg, "work/seg_aclean.mp4")
+    # 2) ЦВЕТ: color.py (звук копирует). Дальше звук уже не трогаем — только copy.
+    colored = run_step("color.py", aclean, "work/seg_color.mp4")
 
-    crop_w, crop_h, x, tracked = crop_window(seg)
+    crop_w, crop_h, x, tracked = crop_window(colored)
 
     print("распознаю речь на куске...")
-    words = so.transcribe(seg)
+    words = so.transcribe(colored)
     ass = so.build_ass(words, "work/subs.ass", OUT_W, OUT_H) if words else None
     if not words:
         print("речь не распозналась — вставлю без субтитров")
 
-    # ОДИН проход: кроп → масштаб 1080×1920 → субтитры. Звук копируем потоком.
+    # 3) НАРЕЗКА 9:16 + субтитры ОДНИМ проходом. Звук — копией потока (уже −14).
     vf = f"crop={crop_w}:{crop_h}:{x}:0,scale={OUT_W}:{OUT_H}"
     if ass:
         vf += f",ass={ass}"
     out = "work/clip.mp4"
-    subprocess.run(["ffmpeg", "-y", "-i", seg, "-vf", vf,
+    subprocess.run(["ffmpeg", "-y", "-i", colored, "-vf", vf,
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
                     "-c:a", "copy", out, "-loglevel", "error"], check=True)
 
@@ -87,9 +100,9 @@ def main():
     link = f"https://youtu.be/{vid}"
     track_txt = "со слежением за лицом" if tracked else "по центру (слежение не сработало)"
     tg.send_message(
-        f"Готовый клип НАШЕЙ нарезкой (без Vizard), {track_txt}, с субтитрами, "
-        f"звук копией потока без пересжатия:\n{link}\n"
-        f"Кусок {int(SEG_START)}–{int(SEG_START + SEG_LEN)} c. Посмотри резкость и субтитры.")
+        f"Готовый клип: звук audio_clean (DeepFilterNet, −14 LUFS) → цвет → наша "
+        f"нарезка 9:16 {track_txt} → субтитры. Звук обработан один раз, дальше копия.\n{link}\n"
+        f"Кусок {int(SEG_START)}–{int(SEG_START + SEG_LEN)} c. Послушай звук, посмотри резкость и субтитры.")
     print(f"ГОТОВО: {link} | слежение={tracked} | слов={len(words)}")
 
 
