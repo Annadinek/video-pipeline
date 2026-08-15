@@ -24,6 +24,7 @@
 | Vizard для нарезки | резкость вдвое хуже (33.4 против 15.1) |
 | OpenCV 5.0 | нет распознавания лиц (убрали CascadeClassifier) |
 | transcript-fixer | читает чужие ключи |
+| torch 2.0.1 с индекса download.pytorch.org/whl/cpu | старые колёса убрали → ставить torch с обычного PyPI |
 
 **ПРИНЯТО И ЗАМОРОЖЕНО** (не трогать без прямой просьбы Анны):
 DeepFilterNet + dry_mix 0.15, −14 LUFS, своя нарезка `vertical_cut.py`, OpenCV 4.x.

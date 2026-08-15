@@ -50,8 +50,9 @@ jobs:
           python3 -m pip install --quiet requests faster-whisper "opencv-python-headless<5" numpy \
             google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
           # DeepFilterNet (звук): строго совместимые версии, модель уже в репозитории.
+          # torch 2.0.1 ставим с обычного PyPI: с cpu-индекса старые колёса убрали.
           python3 -m pip install --quiet deepfilternet==0.5.6
-          python3 -m pip install --quiet torch==2.0.1 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
+          python3 -m pip install --quiet torch==2.0.1 torchaudio==2.0.2
           if ! command -v deno >/dev/null 2>&1; then
             curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
             echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
