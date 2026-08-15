@@ -96,5 +96,5 @@ jobs:
           git add assets/measure 2>/dev/null || true
           git commit -m "замер: резкость и звук — исходник vs Vizard vs наш vertical_cut" || echo "нечего коммитить"
           for i in 1 2 3 4; do
-            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+            git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
           done
