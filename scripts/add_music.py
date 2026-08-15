@@ -8,9 +8,26 @@
 
 import os
 import subprocess
+import time
 
 import tg
 import yt_ops
+
+
+def get_updates_retry(tries=6, wait=6):
+    """getUpdates с повтором на 409 Conflict (когда бота дёргает кто-то ещё)."""
+    last = None
+    for i in range(tries):
+        try:
+            return tg.get_updates()
+        except Exception as e:
+            last = e
+            if "409" in str(e):
+                print(f"getUpdates 409, повтор {i + 1}/{tries} через {wait}с...")
+                time.sleep(wait)
+                continue
+            raise
+    raise last
 
 WORK = "work"
 # Субтитрованный черновик этого видео (чёткий, 1440x1080).
@@ -20,7 +37,7 @@ MUSIC_GAIN = os.environ.get("MUSIC_GAIN", "0.15")  # тихий фон
 
 def find_music_in_bot():
     """Ищет в сообщениях бота последний аудио-файл от Анны."""
-    updates = tg.get_updates()
+    updates = get_updates_retry()
     best = None
     for u in updates:
         msg = u.get("message") or u.get("channel_post") or {}
