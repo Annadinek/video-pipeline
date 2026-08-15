@@ -27,7 +27,7 @@ def get_updates_retry(tries=6, wait=6):
                 time.sleep(wait)
                 continue
             raise
-    raise last
+    raise last if last is not None else RuntimeError("getUpdates не удался")
 
 WORK = "work"
 # Субтитрованный черновик этого видео (чёткий, 1440x1080).
