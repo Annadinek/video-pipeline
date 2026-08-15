@@ -1,8 +1,8 @@
 {
   "lut": "presets/cinema.cube",
   "auto": "on",
-  "target_brightness": 120,
-  "target_saturation": 120,
+  "target_brightness": 69,
+  "target_saturation": 180,
   "brightness": 0.0,
   "contrast": 1.03,
   "saturation": 1.06,
