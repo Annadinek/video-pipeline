@@ -13,6 +13,10 @@ on:
         description: "Громкость музыки (0.10–0.25, тихий фон)"
         required: false
         default: "0.15"
+      music_file:
+        description: "Путь к треку в репозитории (пусто = искать в боте)"
+        required: false
+        default: "music/anna_piano.mp3"
 
 concurrency:
   group: add-music
@@ -30,6 +34,7 @@ jobs:
       YT_COOKIES: ${{ secrets.YT_COOKIES }}
       VIDEO_URL: ${{ github.event.inputs.video_url || 'https://youtu.be/FqD5mLEaRfc' }}
       MUSIC_GAIN: ${{ github.event.inputs.music_gain || '0.15' }}
+      MUSIC_FILE: ${{ github.event.inputs.music_file }}
     steps:
       - uses: actions/checkout@v4
       - name: Инструменты

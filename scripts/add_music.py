@@ -61,6 +61,12 @@ def find_music_in_bot():
 
 def download_music():
     os.makedirs(WORK, exist_ok=True)
+    # Приоритет: если задан готовый файл музыки в репозитории (MUSIC_FILE),
+    # берём его — не зависим от бота (getUpdates бывает заблокирован 409).
+    mf = os.environ.get("MUSIC_FILE")
+    if mf and os.path.exists(mf):
+        print(f"беру музыку из файла: {mf}")
+        return mf
     m = find_music_in_bot()
     if not m:
         tg.send_message("Не вижу в боте аудио-файл с музыкой. Залей трек ещё раз "
