@@ -38,6 +38,10 @@ jobs:
       WHISPER_MODEL: medium
     steps:
       - uses: actions/checkout@v4
+      - name: Python 3.11 (у torch 2.0.1 нет колеса под 3.12)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Инструменты
         run: |
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
