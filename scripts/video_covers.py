@@ -58,7 +58,7 @@ def download(video_id):
 
 def extract_frames(raw):
     os.makedirs(FRAMES, exist_ok=True)
-    subprocess.run(["ffmpeg", "-y", "-i", raw, "-vf", "fps=1/5",
+    subprocess.run(["ffmpeg", "-y", "-i", raw, "-vf", "fps=1/4",
                     "-q:v", "2", os.path.join(FRAMES, "f_%04d.jpg"),
                     "-loglevel", "error"], check=True)
     return sorted(glob.glob(os.path.join(FRAMES, "f_*.jpg")))
@@ -92,9 +92,9 @@ def pick_frames(video_id):
     idx = {s["path"]: i for i, s in enumerate(stats)}
     picks = []
     for s in good:
-        if all(abs(idx[s["path"]] - idx[p["path"]]) > 3 for p in picks):
+        if all(abs(idx[s["path"]] - idx[p["path"]]) > 1 for p in picks):
             picks.append(s)
-        if len(picks) >= 10:
+        if len(picks) >= 24:
             break
     meta = []
     for i, s in enumerate(picks, 1):
@@ -106,7 +106,30 @@ def pick_frames(video_id):
               f"(яркость {s['bright']:.0f}, резкость {s['sharp']:.1f})")
     with open(os.path.join(out, "cands.json"), "w") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
+    make_contact_sheet(picks, os.path.join(out, "contact_sheet.jpg"))
     print("готово, кандидаты в", out)
+
+
+def make_contact_sheet(picks, out_path, cols=4, cw=360, ch=270):
+    """Одна картинка-сетка со всеми кандидатами и номерами — для быстрого выбора."""
+    n = len(picks)
+    rows = (n + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * cw, rows * ch), (18, 18, 18))
+    d = ImageDraw.Draw(sheet)
+    try:
+        font = ImageFont.truetype(FONT_PATH, 40)
+    except Exception:
+        font = ImageFont.load_default()
+    for i, s in enumerate(picks):
+        im = Image.open(s["path"]).convert("RGB").resize((cw, ch))
+        r, c = divmod(i, cols)
+        x, y = c * cw, r * ch
+        sheet.paste(im, (x, y))
+        label = str(i + 1)
+        d.rectangle([x + 6, y + 6, x + 6 + 58, y + 6 + 52], fill=(0, 0, 0))
+        d.text((x + 16, y + 8), label, font=font, fill=(255, 205, 0))
+    sheet.save(out_path, quality=88)
+    print("контактный лист:", out_path)
 
 
 # ---------- режим covers ----------

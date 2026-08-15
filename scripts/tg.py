@@ -81,6 +81,23 @@ def get_updates(offset=None, timeout=0):
     return _call("getUpdates", offset=offset or 0, timeout=timeout)
 
 
+def get_file_path(file_id):
+    """file_id -> путь файла на серверах Telegram (для скачивания)."""
+    res = _call("getFile", file_id=file_id)
+    return res["file_path"]
+
+
+def download_file(file_id, dst):
+    """Скачать файл из бота по file_id в dst. Лимит Bot API ~20 МБ."""
+    path = get_file_path(file_id)
+    url = f"https://api.telegram.org/file/bot{_token()}/{path}"
+    r = requests.get(url, timeout=300)
+    r.raise_for_status()
+    with open(dst, "wb") as f:
+        f.write(r.content)
+    return dst
+
+
 if __name__ == "__main__":
     # Проверка связи: пишет тестовое сообщение Анне.
     send_message("Проверка связи: бот на месте ✅")
