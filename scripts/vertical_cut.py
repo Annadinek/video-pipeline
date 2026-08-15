@@ -67,10 +67,26 @@ def detect_face_centers(path, width, height, step=0.5):
     """
     import cv2  # ставится в workflow: pip install opencv-python-headless
 
-    cascade_path = os.path.join(
-        cv2.data.haarcascades, "haarcascade_frontalface_default.xml"
-    )
+    if not hasattr(cv2, "CascadeClassifier"):
+        raise RuntimeError(
+            "cv2 без CascadeClassifier — OpenCV установлен битым. "
+            "Нужны системные libgl1/libglib2.0-0 и opencv-python-headless.")
+    # каскад: сначала штатный путь cv2.data, потом запасные места.
+    candidates = []
+    data = getattr(cv2, "data", None)
+    if data is not None:
+        candidates.append(os.path.join(data.haarcascades,
+                                        "haarcascade_frontalface_default.xml"))
+    candidates += [
+        "/usr/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+        "/usr/local/share/opencv4/haarcascades/haarcascade_frontalface_default.xml",
+    ]
+    cascade_path = next((p for p in candidates if p and os.path.exists(p)), None)
+    if not cascade_path:
+        raise RuntimeError(f"не найден файл каскада лица; искал: {candidates}")
     face_cascade = cv2.CascadeClassifier(cascade_path)
+    if face_cascade.empty():
+        raise RuntimeError(f"каскад не загрузился: {cascade_path}")
 
     cap = cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -182,6 +198,9 @@ def main():
         print(f"Готово (слежение за лицом): {args.output}")
     except Exception as e:  # noqa: BLE001
         log_error(f"слежение сорвалось ({e}), режу по центру")
+        print(f"ВНИМАНИЕ: слежение за лицом сорвалось: {e}", file=sys.stderr)
+        if str(os.environ.get("FACE_TRACK_STRICT", "0")) == "1":
+            raise
         center_crop(args.input, args.output, width, height)
         print(f"Готово (запасной вариант, по центру): {args.output}")
 
