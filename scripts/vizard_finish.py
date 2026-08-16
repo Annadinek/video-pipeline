@@ -31,7 +31,7 @@ OUT = "assets/vzfinish"
 
 
 def get_clips():
-    key = os.environ["VIZARDAI_API_KEY"]
+    key = os.environ["VIZARDAI_API_KEY"].strip()
     data = requests.get(f"{API}/project/query/{PROJECT_ID}",
                         headers={"VIZARDAI_API_KEY": key}, timeout=60).json()
     return data.get("videos") or []
