@@ -1,0 +1,95 @@
+name: our-clip
+
+# Наша сборка ОДНОГО ролика полностью нашими средствами (scripts/our_clip.py):
+#   скачать → цвет → вертикаль 9:16 → субтитры → вставки.
+# ЗВУК НЕ ОБРАБАТЫВАЕМ — копируется как есть (звук/обрезку Анна делает сама в CapCut,
+# ссылку даёт на видео с уже готовым звуком). Готовые clip_*.mp4 — в артефактах.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube (со звуком, готовым в CapCut)'
+        required: true
+        type: string
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '0:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять'
+        required: false
+        default: '120'
+        type: string
+      face_tracking:
+        description: 'Слежение за лицом в вертикали (true/false)'
+        required: false
+        default: 'true'
+        type: string
+      subs:
+        description: 'Делать субтитры (нужен Whisper, ставится сам)'
+        required: false
+        default: true
+        type: boolean
+      inserts:
+        description: 'Делать вставки (нужен секрет PEXELS_API_KEY)'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  our-clip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим инструменты (yt-dlp, ffmpeg, OpenCV, Whisper)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs \
+            "opencv-python-headless<5" numpy faster-whisper requests
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      - name: Сборка ролика (our_clip.py)
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          URL: ${{ inputs.url }}                    # через env — без подстановки в shell
+          START: ${{ inputs.start }}
+          SECONDS_ARG: ${{ inputs.seconds }}
+          FACE: ${{ inputs.face_tracking }}
+          SUBS: ${{ inputs.subs }}
+          INSERTS: ${{ inputs.inserts }}
+        run: |
+          set -o pipefail
+          mkdir -p outputs/our-clip
+          ARGS=""
+          if [ "$SUBS" != "true" ]; then ARGS="$ARGS --no-subs"; fi
+          if [ "$INSERTS" != "true" ]; then ARGS="$ARGS --no-inserts"; fi
+          python scripts/our_clip.py \
+            --url "$URL" \
+            --out-dir outputs/our-clip \
+            --start "$START" --seconds "$SECONDS_ARG" \
+            --face-tracking "$FACE" \
+            $ARGS | tee outputs/our-clip/report.txt
+
+      - name: Отдаём готовые клипы и отчёт
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: our-clip
+          path: |
+            outputs/our-clip/clip*.mp4
+            outputs/our-clip/report.txt
+          if-no-files-found: ignore
