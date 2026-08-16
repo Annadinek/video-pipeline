@@ -17,7 +17,7 @@ import os
 import subprocess
 import sys
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 try:
     import numpy as np
@@ -182,8 +182,7 @@ def fit_font(text, max_w, start=118):
     return ImageFont.truetype(FONT_PATH, 46)
 
 
-def draw_cover(frame, lines, face_frac, fx, fy, out, face_out=FACE_OUT):
-    im = load_bg(frame, fx, fy, face_frac, face_out)
+def _draw_text(im, lines):
     d = ImageDraw.Draw(im)
     margin = 64
     max_w = W - margin * 2
@@ -205,8 +204,57 @@ def draw_cover(frame, lines, face_frac, fx, fy, out, face_out=FACE_OUT):
             d.text((x, y), t, font=font, fill=(255, 255, 255),
                    stroke_width=6, stroke_fill=(0, 0, 0))
         y += hh + gap
+
+
+def draw_cover(frame, lines, face_frac, fx, fy, out, face_out=FACE_OUT):
+    im = load_bg(frame, fx, fy, face_frac, face_out)
+    _draw_text(im, lines)
     im.save(out, quality=90)
     print("обложка:", out)
+
+
+def content_box(im):
+    """Границы неполосатого (не чёрного) содержимого по горизонтали."""
+    if np is None:
+        return 0, im.width
+    a = np.asarray(im.convert("L"), dtype="float64")
+    colmean = a.mean(axis=0)
+    cols = np.where(colmean > 18)[0]
+    if len(cols) == 0:
+        return 0, im.width
+    return int(cols[0]), int(cols[-1]) + 1
+
+
+def draw_portrait_cover(frame, lines, out):
+    """Обложка из ВЕРТИКАЛЬНОГО кадра (селфи): лицо по центру, фон — размытие,
+    без чёрных полей. Для кадров «снимаю себя» со взглядом в объектив."""
+    im = Image.open(frame).convert("RGB")
+    x0, x1 = content_box(im)
+    portrait = im.crop((x0, 0, x1, im.height))
+    pw, ph = portrait.size
+    # фон: заполнить весь кадр размытой версией (без полей)
+    scale = max(W / pw, H / ph)
+    bw, bh = int(pw * scale), int(ph * scale)
+    bg = portrait.resize((bw, bh))
+    bx, by = (bw - W) // 2, (bh - H) // 2
+    bg = bg.crop((bx, by, bx + W, by + H)).filter(ImageFilter.GaussianBlur(28))
+    bg = ImageEnhance.Brightness(bg).enhance(0.5)
+    # передний план: портрет во всю высоту, по центру
+    fw = int(pw * (H / ph))
+    fg = portrait.resize((fw, H))
+    fg = ImageEnhance.Brightness(fg).enhance(1.06)
+    fg = ImageEnhance.Contrast(fg).enhance(1.04)
+    canvas = bg.copy()
+    canvas.paste(fg, ((W - fw) // 2, 0))
+    # затемнение снизу под текст
+    grad = Image.new("L", (1, H), 0)
+    for yy in range(H):
+        t = max(0.0, (yy - H * 0.5) / (H * 0.5))
+        grad.putpixel((0, yy), int(200 * t))
+    canvas = Image.composite(Image.new("RGB", (W, H), (0, 0, 0)), canvas, grad.resize((W, H)))
+    _draw_text(canvas, lines)
+    canvas.save(out, quality=90)
+    print("обложка (портрет):", out)
 
 
 def make_covers(picks_path):
@@ -215,10 +263,13 @@ def make_covers(picks_path):
     out = os.path.dirname(picks_path)
     for i, item in enumerate(spec["covers"], 1):
         lines = [(t, s) for t, s in item["lines"]]
-        draw_cover(item["frame"], lines, item.get("face_frac", 0.22),
-                   item.get("fx", 0.5), item.get("fy", 0.42),
-                   os.path.join(out, f"cover_{i}.jpg"),
-                   item.get("face_out", FACE_OUT))
+        dst = os.path.join(out, f"cover_{i}.jpg")
+        if item.get("portrait"):
+            draw_portrait_cover(item["frame"], lines, dst)
+        else:
+            draw_cover(item["frame"], lines, item.get("face_frac", 0.22),
+                       item.get("fx", 0.5), item.get("fy", 0.42), dst,
+                       item.get("face_out", FACE_OUT))
 
 
 def main():

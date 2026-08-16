@@ -1,27 +1,18 @@
 {
   "covers": [
     {
-      "frame": "assets/NtX08PXq7i8/cand_24.jpg",
-      "face_frac": 0.24,
-      "face_out": 0.26,
-      "fx": 0.33,
-      "fy": 0.40,
+      "frame": "assets/NtX08PXq7i8/cand_48.jpg",
+      "portrait": true,
       "lines": [["ЗАЧЕМ МЫ", "white"], ["ЖИВЁМ?", "yellow"]]
     },
     {
-      "frame": "assets/NtX08PXq7i8/cand_24.jpg",
-      "face_frac": 0.24,
-      "face_out": 0.26,
-      "fx": 0.33,
-      "fy": 0.40,
+      "frame": "assets/NtX08PXq7i8/cand_44.jpg",
+      "portrait": true,
       "lines": [["В ЧЁМ СМЫСЛ", "white"], ["ЖИЗНИ?", "yellow"]]
     },
     {
-      "frame": "assets/NtX08PXq7i8/cand_24.jpg",
-      "face_frac": 0.24,
-      "face_out": 0.26,
-      "fx": 0.33,
-      "fy": 0.40,
+      "frame": "assets/NtX08PXq7i8/cand_48.jpg",
+      "portrait": true,
       "lines": [["ОПЫТ —", "white"], ["ТО, ЧТО ДО УМА", "yellow"]]
     }
   ]
