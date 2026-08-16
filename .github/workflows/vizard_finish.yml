@@ -1,0 +1,69 @@
+# vizard_finish.yml — финальная сборка Shorts: лицо дальше+у́же, края размыты,
+# музыка, караоке-субтитры (наши). Из ЧИСТЫХ клипов Vizard (без его субтитров).
+name: vizard-finish
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Проект Vizard БЕЗ субтитров"
+        required: true
+      indices:
+        description: "Номера клипов через запятую"
+        required: false
+        default: "1"
+      scale_x:
+        description: "Ширина контента (у́же лицо), 0.7–1.0"
+        required: false
+        default: "0.82"
+      scale_y:
+        description: "Высота контента (дальше лицо), 0.8–1.0"
+        required: false
+        default: "0.90"
+      send:
+        description: "1 = слать в бот, 0 = только превью-кадры"
+        required: false
+        default: "0"
+      music_file:
+        description: "Фоновая музыка"
+        required: false
+        default: "music/anna_piano.mp3"
+
+concurrency:
+  group: vizard-finish
+  cancel-in-progress: false
+
+jobs:
+  finish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      PROJECT_ID: ${{ github.event.inputs.project_id }}
+      INDICES: ${{ github.event.inputs.indices || '1' }}
+      SCALE_X: ${{ github.event.inputs.scale_x || '0.82' }}
+      SCALE_Y: ${{ github.event.inputs.scale_y || '0.90' }}
+      SEND: ${{ github.event.inputs.send || '0' }}
+      MUSIC_FILE: ${{ github.event.inputs.music_file || 'music/anna_piano.mp3' }}
+      WHISPER_MODEL: medium
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          python3 -m pip install --quiet requests faster-whisper
+      - name: Собрать финальные клипы
+        run: python3 scripts/vizard_finish.py
+      - name: Сохранить превью-кадры
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add assets/vzfinish 2>/dev/null || true
+          git commit -m "vizard-finish: превью финальных шортов" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
+          done
