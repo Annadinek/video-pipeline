@@ -40,6 +40,10 @@ jobs:
           mkdir -p work
           if [ -n "${YT_COOKIES}" ]; then printf '%s' "$YT_COOKIES" > work/cookies.txt; fi
       - name: Собрать кадры-кандидаты
+        env:
+          COVER_EVEN: "1"
+          COVER_N: "48"
+          COVER_COLS: "6"
         run: python3 scripts/video_covers.py "$VIDEO_ID"
       - name: Закоммитить кандидаты
         if: always()

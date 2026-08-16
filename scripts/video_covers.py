@@ -87,15 +87,25 @@ def pick_frames(video_id):
     stats = [frame_stats(f) for f in frames]
     # отбрасываем слишком тёмные/светлые
     good = [s for s in stats if 45 < s["bright"] < 225]
-    good.sort(key=lambda s: s["sharp"], reverse=True)
-    # берём топ по резкости, но не соседние кадры (разнообразие)
     idx = {s["path"]: i for i, s in enumerate(stats)}
-    picks = []
-    for s in good:
-        if all(abs(idx[s["path"]] - idx[p["path"]]) > 1 for p in picks):
-            picks.append(s)
-        if len(picks) >= 24:
-            break
+    want = int(os.environ.get("COVER_N", "24"))
+    if os.environ.get("COVER_EVEN", "0") == "1":
+        # РАВНОМЕРНО по всему ролику (по времени) — чтобы увидеть все моменты взгляда.
+        good_time = sorted(good, key=lambda s: idx[s["path"]])
+        if len(good_time) <= want:
+            picks = good_time
+        else:
+            step = len(good_time) / want
+            picks = [good_time[int(i * step)] for i in range(want)]
+    else:
+        # по резкости, не соседние кадры
+        good.sort(key=lambda s: s["sharp"], reverse=True)
+        picks = []
+        for s in good:
+            if all(abs(idx[s["path"]] - idx[p["path"]]) > 1 for p in picks):
+                picks.append(s)
+            if len(picks) >= want:
+                break
     meta = []
     for i, s in enumerate(picks, 1):
         dst = os.path.join(out, f"cand_{i:02d}.jpg")
@@ -106,7 +116,8 @@ def pick_frames(video_id):
               f"(яркость {s['bright']:.0f}, резкость {s['sharp']:.1f})")
     with open(os.path.join(out, "cands.json"), "w") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
-    make_contact_sheet(picks, os.path.join(out, "contact_sheet.jpg"))
+    make_contact_sheet(picks, os.path.join(out, "contact_sheet.jpg"),
+                       cols=int(os.environ.get("COVER_COLS", "4")))
     print("готово, кандидаты в", out)
 
 
