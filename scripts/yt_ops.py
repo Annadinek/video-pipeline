@@ -33,6 +33,23 @@ def upload_video(path, title, description, privacy="unlisted", tags=None):
     return resp["id"]
 
 
+def update_snippet(video_id, title, description, tags=None, category_id="22", lang="ru"):
+    """Обновить заголовок/описание/теги видео (~50 единиц). Для snippet-update
+    YouTube требует categoryId в теле."""
+    yt = yt_auth.get_service()
+    body = {
+        "id": video_id,
+        "snippet": {
+            "title": title[:100],
+            "description": description,
+            "categoryId": category_id,
+            "tags": tags or [],
+            "defaultLanguage": lang,
+        },
+    }
+    return yt.videos().update(part="snippet", body=body).execute()
+
+
 def set_privacy(video_id, privacy="public"):
     """Сменить статус видео (unlisted -> public). Дёшево (~50 единиц)."""
     yt = yt_auth.get_service()
