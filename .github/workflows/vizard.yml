@@ -47,6 +47,7 @@ jobs:
     permissions:
       contents: write
     env:
+      USE_VIZARD: "1"
       VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
       VIZARD_API_KEY: ${{ secrets.VIZARD_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
