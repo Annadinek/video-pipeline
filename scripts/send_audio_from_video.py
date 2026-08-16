@@ -3,7 +3,6 @@
 # без обработки) и шлёт её в бот на прослушку. Аудио не трогаем.
 # Запуск: send_audio_from_video.py <url или id>
 
-import glob
 import os
 import subprocess
 import sys
@@ -23,19 +22,24 @@ def main():
             "--retries", "5", "--fragment-retries", "5"]
     if os.path.exists("work/cookies.txt"):
         base += ["--cookies", "work/cookies.txt"]
-    # только аудио, готовый m4a — БЕЗ пересжатия. Если m4a нет — любой bestaudio.
-    cmd = base + ["-f", "ba[ext=m4a]/ba", "-o", "work/audio.%(ext)s", url]
+    # Скачиваем как обычно (у части видео отдельной аудио-дорожки нет).
+    cmd = base + ["-S", "res,ext:mp4:m4a", "-f", "bv*+ba/b",
+                  "--merge-output-format", "mp4", "-o", "work/full.mp4", url]
     ok = False
     for a in range(1, 4):
-        if subprocess.run(cmd).returncode == 0:
+        if subprocess.run(cmd).returncode == 0 and os.path.exists("work/full.mp4"):
             ok = True
             break
-        print(f"скачивание аудио: попытка {a} не удалась")
-    files = glob.glob("work/audio.*")
-    if not ok or not files:
-        tg.send_message("Не смог забрать аудио из видео. Проверь ссылку/доступ.")
-        raise SystemExit("audio download failed")
-    path = files[0]
+        print(f"скачивание: попытка {a} не удалась")
+    if not ok:
+        tg.send_message("Не смог забрать видео/аудио. Проверь ссылку/доступ.")
+        raise SystemExit("download failed")
+    # Вынимаем звук КОПИЕЙ ПОТОКА (-c:a copy) — байты аудио не меняем.
+    path = "work/audio.m4a"
+    subprocess.run(["ffmpeg", "-y", "-i", "work/full.mp4", "-vn", "-c:a", "copy",
+                    path, "-loglevel", "error"], check=True)
+    if not os.path.exists(path):
+        raise SystemExit("не извлёк аудио")
     size = os.path.getsize(path) / 1e6
     print(f"аудио: {path} ({size:.1f} МБ)")
     if size > 49:
