@@ -17,7 +17,7 @@ def main():
         raise SystemExit("Не задан URL/ID видео.")
     url = ARG if "://" in ARG else f"https://www.youtube.com/watch?v={ARG}"
     os.makedirs("work", exist_ok=True)
-    base = ["yt-dlp", "--remote-components", "ejs:github",
+    base = ["yt-dlp", "--force-ipv4", "--remote-components", "ejs:github",
             "--extractor-args", "youtube:player_client=web_safari,web,tv",
             "--retries", "5", "--fragment-retries", "5"]
     if os.path.exists("work/cookies.txt"):
