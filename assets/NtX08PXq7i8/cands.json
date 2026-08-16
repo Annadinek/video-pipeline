@@ -1,146 +1,290 @@
 [
   {
     "n": 1,
-    "src": "f_0172.jpg",
-    "bright": 76.9,
-    "sharp": 14.3
-  },
-  {
-    "n": 2,
-    "src": "f_0010.jpg",
-    "bright": 78.8,
-    "sharp": 14.19
-  },
-  {
-    "n": 3,
-    "src": "f_0020.jpg",
-    "bright": 86.2,
-    "sharp": 14.12
-  },
-  {
-    "n": 4,
-    "src": "f_0007.jpg",
-    "bright": 72.9,
-    "sharp": 13.91
-  },
-  {
-    "n": 5,
-    "src": "f_0160.jpg",
-    "bright": 84.1,
-    "sharp": 13.8
-  },
-  {
-    "n": 6,
-    "src": "f_0043.jpg",
-    "bright": 80.5,
-    "sharp": 13.66
-  },
-  {
-    "n": 7,
-    "src": "f_0133.jpg",
-    "bright": 78.6,
-    "sharp": 13.63
-  },
-  {
-    "n": 8,
-    "src": "f_0016.jpg",
-    "bright": 78.7,
-    "sharp": 13.59
-  },
-  {
-    "n": 9,
     "src": "f_0001.jpg",
     "bright": 75.1,
     "sharp": 13.58
   },
   {
-    "n": 10,
-    "src": "f_0122.jpg",
-    "bright": 75.7,
-    "sharp": 13.49
+    "n": 2,
+    "src": "f_0008.jpg",
+    "bright": 73.5,
+    "sharp": 13.81
   },
   {
-    "n": 11,
-    "src": "f_0176.jpg",
-    "bright": 74.6,
-    "sharp": 13.43
+    "n": 3,
+    "src": "f_0015.jpg",
+    "bright": 74.3,
+    "sharp": 12.06
   },
   {
-    "n": 12,
-    "src": "f_0013.jpg",
-    "bright": 77.0,
-    "sharp": 13.41
-  },
-  {
-    "n": 13,
-    "src": "f_0131.jpg",
-    "bright": 76.8,
-    "sharp": 13.33
-  },
-  {
-    "n": 14,
-    "src": "f_0030.jpg",
-    "bright": 80.6,
-    "sharp": 13.29
-  },
-  {
-    "n": 15,
+    "n": 4,
     "src": "f_0022.jpg",
     "bright": 74.7,
     "sharp": 13.27
   },
   {
-    "n": 16,
-    "src": "f_0168.jpg",
-    "bright": 73.5,
-    "sharp": 13.25
+    "n": 5,
+    "src": "f_0029.jpg",
+    "bright": 80.8,
+    "sharp": 13.01
   },
   {
-    "n": 17,
-    "src": "f_0027.jpg",
-    "bright": 78.0,
-    "sharp": 13.25
-  },
-  {
-    "n": 18,
-    "src": "f_0186.jpg",
-    "bright": 74.9,
-    "sharp": 13.25
-  },
-  {
-    "n": 19,
-    "src": "f_0048.jpg",
-    "bright": 74.6,
-    "sharp": 13.23
-  },
-  {
-    "n": 20,
-    "src": "f_0053.jpg",
-    "bright": 76.9,
-    "sharp": 13.19
-  },
-  {
-    "n": 21,
-    "src": "f_0033.jpg",
-    "bright": 80.2,
-    "sharp": 13.18
-  },
-  {
-    "n": 22,
+    "n": 6,
     "src": "f_0036.jpg",
     "bright": 79.8,
     "sharp": 13.17
   },
   {
+    "n": 7,
+    "src": "f_0043.jpg",
+    "bright": 80.5,
+    "sharp": 13.66
+  },
+  {
+    "n": 8,
+    "src": "f_0050.jpg",
+    "bright": 71.4,
+    "sharp": 11.9
+  },
+  {
+    "n": 9,
+    "src": "f_0057.jpg",
+    "bright": 72.1,
+    "sharp": 12.04
+  },
+  {
+    "n": 10,
+    "src": "f_0064.jpg",
+    "bright": 68.5,
+    "sharp": 11.34
+  },
+  {
+    "n": 11,
+    "src": "f_0072.jpg",
+    "bright": 72.1,
+    "sharp": 11.99
+  },
+  {
+    "n": 12,
+    "src": "f_0079.jpg",
+    "bright": 74.4,
+    "sharp": 12.27
+  },
+  {
+    "n": 13,
+    "src": "f_0086.jpg",
+    "bright": 70.1,
+    "sharp": 12.4
+  },
+  {
+    "n": 14,
+    "src": "f_0093.jpg",
+    "bright": 72.5,
+    "sharp": 12.22
+  },
+  {
+    "n": 15,
+    "src": "f_0100.jpg",
+    "bright": 72.1,
+    "sharp": 12.02
+  },
+  {
+    "n": 16,
+    "src": "f_0107.jpg",
+    "bright": 73.2,
+    "sharp": 12.43
+  },
+  {
+    "n": 17,
+    "src": "f_0114.jpg",
+    "bright": 74.6,
+    "sharp": 12.31
+  },
+  {
+    "n": 18,
+    "src": "f_0121.jpg",
+    "bright": 74.1,
+    "sharp": 12.46
+  },
+  {
+    "n": 19,
+    "src": "f_0128.jpg",
+    "bright": 74.7,
+    "sharp": 12.74
+  },
+  {
+    "n": 20,
+    "src": "f_0135.jpg",
+    "bright": 72.0,
+    "sharp": 12.32
+  },
+  {
+    "n": 21,
+    "src": "f_0143.jpg",
+    "bright": 72.2,
+    "sharp": 12.99
+  },
+  {
+    "n": 22,
+    "src": "f_0150.jpg",
+    "bright": 68.0,
+    "sharp": 11.86
+  },
+  {
     "n": 23,
-    "src": "f_0041.jpg",
-    "bright": 79.1,
-    "sharp": 13.08
+    "src": "f_0157.jpg",
+    "bright": 67.3,
+    "sharp": 12.03
   },
   {
     "n": 24,
-    "src": "f_0119.jpg",
-    "bright": 74.9,
-    "sharp": 13.01
+    "src": "f_0164.jpg",
+    "bright": 70.9,
+    "sharp": 12.45
+  },
+  {
+    "n": 25,
+    "src": "f_0171.jpg",
+    "bright": 71.5,
+    "sharp": 12.74
+  },
+  {
+    "n": 26,
+    "src": "f_0178.jpg",
+    "bright": 73.4,
+    "sharp": 11.92
+  },
+  {
+    "n": 27,
+    "src": "f_0185.jpg",
+    "bright": 70.4,
+    "sharp": 11.72
+  },
+  {
+    "n": 28,
+    "src": "f_0192.jpg",
+    "bright": 79.9,
+    "sharp": 12.52
+  },
+  {
+    "n": 29,
+    "src": "f_0199.jpg",
+    "bright": 69.0,
+    "sharp": 12.07
+  },
+  {
+    "n": 30,
+    "src": "f_0207.jpg",
+    "bright": 71.4,
+    "sharp": 11.88
+  },
+  {
+    "n": 31,
+    "src": "f_0214.jpg",
+    "bright": 68.1,
+    "sharp": 11.86
+  },
+  {
+    "n": 32,
+    "src": "f_0221.jpg",
+    "bright": 70.1,
+    "sharp": 11.88
+  },
+  {
+    "n": 33,
+    "src": "f_0228.jpg",
+    "bright": 69.5,
+    "sharp": 11.49
+  },
+  {
+    "n": 34,
+    "src": "f_0235.jpg",
+    "bright": 67.7,
+    "sharp": 11.67
+  },
+  {
+    "n": 35,
+    "src": "f_0242.jpg",
+    "bright": 67.7,
+    "sharp": 11.44
+  },
+  {
+    "n": 36,
+    "src": "f_0249.jpg",
+    "bright": 66.5,
+    "sharp": 11.06
+  },
+  {
+    "n": 37,
+    "src": "f_0256.jpg",
+    "bright": 66.3,
+    "sharp": 11.23
+  },
+  {
+    "n": 38,
+    "src": "f_0263.jpg",
+    "bright": 70.5,
+    "sharp": 11.46
+  },
+  {
+    "n": 39,
+    "src": "f_0270.jpg",
+    "bright": 71.2,
+    "sharp": 11.5
+  },
+  {
+    "n": 40,
+    "src": "f_0278.jpg",
+    "bright": 71.9,
+    "sharp": 11.72
+  },
+  {
+    "n": 41,
+    "src": "f_0285.jpg",
+    "bright": 69.7,
+    "sharp": 11.37
+  },
+  {
+    "n": 42,
+    "src": "f_0292.jpg",
+    "bright": 72.7,
+    "sharp": 11.94
+  },
+  {
+    "n": 43,
+    "src": "f_0299.jpg",
+    "bright": 62.7,
+    "sharp": 6.47
+  },
+  {
+    "n": 44,
+    "src": "f_0306.jpg",
+    "bright": 66.6,
+    "sharp": 6.01
+  },
+  {
+    "n": 45,
+    "src": "f_0313.jpg",
+    "bright": 72.8,
+    "sharp": 6.41
+  },
+  {
+    "n": 46,
+    "src": "f_0320.jpg",
+    "bright": 72.1,
+    "sharp": 6.3
+  },
+  {
+    "n": 47,
+    "src": "f_0327.jpg",
+    "bright": 73.1,
+    "sharp": 6.09
+  },
+  {
+    "n": 48,
+    "src": "f_0334.jpg",
+    "bright": 70.1,
+    "sharp": 6.38
   }
 ]
