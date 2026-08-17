@@ -23,6 +23,10 @@ on:
         description: "public / unlisted"
         required: false
         default: "public"
+      dry_run:
+        description: "1 = только образцы в бот, без выкладки на YouTube"
+        required: false
+        default: "0"
   schedule:
     # 07:10 UTC ≈ 10:10 по Турции. Чуть позже 10:00, чтобы дневной лимит загрузок
     # YouTube (сброс в полночь по тихоокеанскому = ~10:00 Турции) уже обновился.
@@ -48,6 +52,7 @@ jobs:
       YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload || '6' }}
       SQUEEZE: ${{ github.event.inputs.squeeze || '0.5' }}
       PRIVACY: ${{ github.event.inputs.privacy || 'public' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
       # стиль субтитров — как одобрила Анна (крупные, компактные, зелёная подсветка)
       FONT_SIZE: "84"
       MAX_WORDS: "2"

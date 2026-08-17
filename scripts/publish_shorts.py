@@ -58,6 +58,7 @@ SQUEEZE = float(os.environ.get("SQUEEZE", "0.5") or "0")
 MUSIC_FILE = os.environ.get("MUSIC_FILE", "music/anna_piano.mp3")
 MUSIC_GAIN = os.environ.get("MUSIC_GAIN", "0.12")
 PRIVACY = os.environ.get("PRIVACY", "public")
+DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"   # 1 = образец в бот, без выкладки
 STATE_FILE = "shorts_published.json"
 PREVIEW = "assets/vzfinish"
 
@@ -143,6 +144,16 @@ def main():
             vz_title = c.get("title") or ""
             title = clean_vz(vz_title)[:100].rstrip(" ,—–-") or "Осознание себя"
             desc = build_desc(vz_title)
+            # Режим ОБРАЗЕЦ: показать Анне готовый клип + подпись, НЕ выкладывать.
+            if DRY_RUN:
+                cap = f"ОБРАЗЕЦ {idx} (не выложен)\n\nЗаголовок: {title}\n\n{desc}"
+                size = os.path.getsize(out) / 1e6
+                if size <= 49:
+                    tg.send_video(out, caption=cap[:1024])
+                else:
+                    tg.send_message(cap + f"\n(видео {size:.0f} МБ, велико для бота)")
+                print(f"клип {idx}: образец в бот (не выложен)")
+                continue
             # Заголовок БЕЗ слова «shorts». Ролик — вертикаль 30–90 сек, YouTube сам
             # классифицирует его как Short по формату кадра и длине.
             vid = yt_ops.upload_video(out, title, desc,
@@ -166,6 +177,12 @@ def main():
                     os.remove(p)
                 except OSError:
                     pass
+
+    if DRY_RUN:
+        tg.send_message("Это образцы после переделки (пока НЕ выложены). "
+                        "Скажи «ок» — и завтра в 10:00 уйдут в Shorts по 6/сутки.")
+        print("ГОТОВО: образцы отправлены (без выкладки)")
+        return
 
     left = len([c for c in clips
                 if str(c.get("videoId")) not in set(str(x) for x in state.get(key, []))])
