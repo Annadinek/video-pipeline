@@ -1,0 +1,75 @@
+# shorts_publish.yml — публикует ГОТОВЫЕ клипы (сужение + караоке + музыка)
+# в YouTube Shorts по 6/сутки. Каждый день в 10:00 по Турции (07:00 UTC)
+# следующая партия, пока не выложены все (учёт в shorts_published.json).
+# Первую партию запускаем вручную (кнопка) сегодня.
+name: shorts-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Проект Vizard (готовые клипы)"
+        required: false
+        default: "33550351"
+      max_upload:
+        description: "Сколько Shorts выложить за раз (лимит YouTube ~6/сутки)"
+        required: false
+        default: "6"
+      squeeze:
+        description: "Сужение лица 0..1 (0.5 = у́же ~в 2р)"
+        required: false
+        default: "0.5"
+      privacy:
+        description: "public / unlisted"
+        required: false
+        default: "public"
+  schedule:
+    # 07:00 UTC = 10:00 по Турции (UTC+3). Каждый день.
+    - cron: "0 7 * * *"
+
+concurrency:
+  group: shorts-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      PROJECT_ID: ${{ github.event.inputs.project_id || '33550351' }}
+      YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload || '6' }}
+      SQUEEZE: ${{ github.event.inputs.squeeze || '0.5' }}
+      PRIVACY: ${{ github.event.inputs.privacy || 'public' }}
+      # стиль субтитров — как одобрила Анна (крупные, компактные, зелёная подсветка)
+      FONT_SIZE: "84"
+      MAX_WORDS: "2"
+      SUB_OUTLINE: "3"
+      SUB_HL: "&H0000FF00"
+      MUSIC_FILE: "music/anna_piano.mp3"
+      WHISPER_MODEL: medium
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          python3 -m pip install --quiet requests faster-whisper \
+            google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+      - name: Выложить партию Shorts
+        run: python3 scripts/publish_shorts.py
+      - name: Сохранить учёт и превью
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add shorts_published.json assets/vzfinish 2>/dev/null || true
+          git commit -m "shorts: учёт выложенных + превью" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
+          done
