@@ -1,0 +1,24 @@
+# list_durations.yml — диагностика: показать длину клипов проекта Vizard (не грузит).
+name: list-durations
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Проект Vizard"
+        required: false
+        default: "33550351"
+
+jobs:
+  durations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      PROJECT_ID: ${{ github.event.inputs.project_id || '33550351' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Длины клипов
+        run: python3 scripts/list_durations.py
