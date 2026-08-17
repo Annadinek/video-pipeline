@@ -36,6 +36,10 @@ on:
         description: "Сужение лица 0..1 (0=нет, 0.5=у́же ~в 2р, максимум)"
         required: false
         default: "0"
+      font_size:
+        description: "Размер субтитров (44 мелкие, 80 крупные)"
+        required: false
+        default: "80"
       music_file:
         description: "Фоновая музыка"
         required: false
@@ -62,6 +66,7 @@ jobs:
       PLAIN: ${{ github.event.inputs.plain || '1' }}
       RAW: ${{ github.event.inputs.raw || '0' }}
       SQUEEZE: ${{ github.event.inputs.squeeze || '0' }}
+      FONT_SIZE: ${{ github.event.inputs.font_size || '80' }}
       MUSIC_FILE: ${{ github.event.inputs.music_file || 'music/anna_piano.mp3' }}
       WHISPER_MODEL: medium
     steps:
