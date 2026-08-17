@@ -26,6 +26,11 @@ MUSIC_GAIN = os.environ.get("MUSIC_GAIN", "0.12")
 SCALE_X = float(os.environ.get("SCALE_X", "0.82"))   # по ширине (у́же)
 SCALE_Y = float(os.environ.get("SCALE_Y", "0.90"))   # по высоте (дальше)
 BLUR_SIGMA = os.environ.get("BLUR_SIGMA", "24")
+# PLAIN=1 (по умолчанию): НИЧЕГО не размываем и не сужаем — оставляем чёткий
+# кадр Vizard как есть, только караоке-субтитры + музыка (Анна: размытые края
+# «размазывают лицо», оставить как на её скрине 1). PLAIN=0 — старый режим с
+# размытыми краями/уменьшением (по умолчанию выключен).
+PLAIN = os.environ.get("PLAIN", "1") == "1"
 SEND = os.environ.get("SEND", "0") == "1"
 OUT = "assets/vzfinish"
 
@@ -47,19 +52,24 @@ def download(url, path):
 
 
 def finish(clip, ass, out, music):
-    fw = int(round(1080 * SCALE_X / 2) * 2)
-    fh = int(round(1920 * SCALE_Y / 2) * 2)
-    x = (1080 - fw) // 2
-    y = (1920 - fh) // 2
-    fc = (
-        f"[0:v]scale=1080:1920,setsar=1,split[bgsrc][fgsrc];"
-        f"[bgsrc]gblur=sigma={BLUR_SIGMA}[bg];"
-        f"[fgsrc]scale={fw}:{fh}[fg];"
-        f"[bg][fg]overlay={x}:{y}[v0];"
-        f"[v0]ass={ass}[v];"
-        f"[0:a]volume=1.0[a0];[1:a]volume={MUSIC_GAIN}[a1];"
-        f"[a0][a1]amix=inputs=2:duration=first[a]"
-    )
+    audio = (f"[0:a]volume=1.0[a0];[1:a]volume={MUSIC_GAIN}[a1];"
+             f"[a0][a1]amix=inputs=2:duration=first[a]")
+    if PLAIN:
+        # Чёткий кадр Vizard как есть + караоке-субтитры + музыка. Ничего не
+        # размываем и не сужаем.
+        fc = f"[0:v]ass={ass}[v];" + audio
+    else:
+        fw = int(round(1080 * SCALE_X / 2) * 2)
+        fh = int(round(1920 * SCALE_Y / 2) * 2)
+        x = (1080 - fw) // 2
+        y = (1920 - fh) // 2
+        fc = (
+            f"[0:v]scale=1080:1920,setsar=1,split[bgsrc][fgsrc];"
+            f"[bgsrc]gblur=sigma={BLUR_SIGMA}[bg];"
+            f"[fgsrc]scale={fw}:{fh}[fg];"
+            f"[bg][fg]overlay={x}:{y}[v0];"
+            f"[v0]ass={ass}[v];" + audio
+        )
     subprocess.run(["ffmpeg", "-y", "-i", clip, "-stream_loop", "-1", "-i", music,
                     "-filter_complex", fc, "-map", "[v]", "-map", "[a]",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
