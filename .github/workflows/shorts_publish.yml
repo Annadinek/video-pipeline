@@ -23,9 +23,10 @@ on:
         description: "public / unlisted"
         required: false
         default: "public"
-  # РАСПИСАНИЕ ВЫКЛЮЧЕНО по просьбе Анны (переделываем публикацию как Shorts).
-  # schedule:
-  #   - cron: "0 7 * * *"   # 07:00 UTC = 10:00 по Турции
+  schedule:
+    # 07:10 UTC ≈ 10:10 по Турции. Чуть позже 10:00, чтобы дневной лимит загрузок
+    # YouTube (сброс в полночь по тихоокеанскому = ~10:00 Турции) уже обновился.
+    - cron: "10 7 * * *"
 
 concurrency:
   group: shorts-publish

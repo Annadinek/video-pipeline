@@ -16,21 +16,40 @@ import subprocess
 
 import requests
 
+import re
+
 import config
 import tg
 import yt_ops
-from vizard_to_youtube import TAGS, check_status, clean_title
+from vizard_to_youtube import check_status
 
 rs = importlib.import_module("resub")  # transcribe_words + build_ass (стиль из env)
 
-# Подпись под Shorts. БЕЗ слова «shorts» (Анна попросила убрать). Ведём в бот.
-HASHTAGS = "#осознаниесебя #подсознание #психология #тревожность #АннаДинэк"
+# Теги ролика (это НЕ хэштеги в тексте). Слова «shorts» здесь нет — Анна запретила.
+TAGS = ["осознание", "подсознание", "психология", "смысл жизни"]
+# Реально запрещённые слова (brain/FORBIDDEN.md на 17.08): матрица/энергия/
+# пробуждение сняты с запрета — их НЕ трогаем (это слова Vizard/Анны).
+FORBIDDEN_ROOTS = ["эзотерик", "вибрац", "саботаж", "квантов", "трансформац"]
 
 
-def build_desc(title):
-    return (f"{title}\n\n"
-            "Полное видео и запись на консультацию — Telegram @dinekanna_bot\n\n"
-            f"{HASHTAGS}")
+def clean_vz(text):
+    """Текст Vizard как есть, только: убрать хэштеги (в т.ч. любые #shorts),
+    «(2)» от Vizard, реально запрещённые слова, лишние пробелы."""
+    t = re.sub(r"\s+", " ", text or "").strip()
+    t = re.sub(r"\(\d+\)", "", t).strip()
+    t = re.sub(r"#\S+", "", t).strip()               # никаких хэштегов, тем более #shorts
+    words = [w for w in t.split()
+             if not any(r in w.lower() for r in FORBIDDEN_ROOTS)]
+    return " ".join(words).strip(" —–-,")
+
+
+def build_desc(vz_title):
+    """Подпись = описание Vizard (его заголовок), сокращённое. Ведём в бот.
+    Слова «shorts» нет нигде."""
+    body = clean_vz(vz_title)
+    if len(body) > 200:
+        body = body[:200].rsplit(" ", 1)[0].rstrip(" ,—–-") + "…"
+    return f"{body}\n\nЗапись на консультацию — Telegram @dinekanna_bot"
 
 API = "https://elb-api.vizard.ai/hvizard-server-front/open-api/v1"
 PROJECT_ID = os.environ["PROJECT_ID"].strip()
@@ -121,9 +140,10 @@ def main():
             subprocess.run(["ffmpeg", "-y", "-ss", "2", "-i", out, "-frames:v", "1",
                             "-q:v", "2", os.path.join(PREVIEW, f"pub_{idx}.jpg"),
                             "-loglevel", "error"], check=False)
-            title = clean_title(c.get("title"))
-            desc = build_desc(title)
-            # Заголовок БЕЗ слова «shorts». Ролик — вертикаль ≤3 мин, YouTube сам
+            vz_title = c.get("title") or ""
+            title = clean_vz(vz_title)[:100].rstrip(" ,—–-") or "Осознание себя"
+            desc = build_desc(vz_title)
+            # Заголовок БЕЗ слова «shorts». Ролик — вертикаль 30–90 сек, YouTube сам
             # классифицирует его как Short по формату кадра и длине.
             vid = yt_ops.upload_video(out, title, desc,
                                       privacy=PRIVACY, tags=TAGS)
@@ -138,7 +158,7 @@ def main():
             save_state(state)
             print(f"клип {idx}: {link} | статус={status} | отклонён={reason}")
         except Exception as e:
-            results.append((idx, clean_title(c.get("title")), None, str(e)))
+            results.append((idx, clean_vz(c.get("title") or ""), None, str(e)))
             print(f"клип {idx}: ошибка — {e}")
         finally:
             for p in (f"work/pub_{idx}.mp4", f"work/fin_{idx}.mp4"):
