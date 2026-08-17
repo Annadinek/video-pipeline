@@ -16,9 +16,9 @@ on:
         required: false
         default: "6"
       squeeze:
-        description: "Сужение лица 0..1 (0.5 = у́же ~в 2р)"
+        description: "Сужение лица 0..1 (0 = НЕ трогать нарезку Vizard — так и надо)"
         required: false
-        default: "0.5"
+        default: "0"
       privacy:
         description: "public / unlisted"
         required: false
@@ -50,7 +50,7 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       PROJECT_ID: ${{ github.event.inputs.project_id || '33550351' }}
       YT_MAX_UPLOAD: ${{ github.event.inputs.max_upload || '6' }}
-      SQUEEZE: ${{ github.event.inputs.squeeze || '0.5' }}
+      SQUEEZE: ${{ github.event.inputs.squeeze || '0' }}
       PRIVACY: ${{ github.event.inputs.privacy || 'public' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
       # стиль субтитров — как одобрила Анна (крупные, компактные, зелёная подсветка)
