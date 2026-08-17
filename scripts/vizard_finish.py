@@ -91,13 +91,28 @@ def main():
             continue
         c = clips[idx - 1]
         clip = download(c["videoUrl"], f"work/vf_{idx}.mp4")
+        title = (c.get("title") or "").strip()
+        # RAW=1 — отправить ОРИГИНАЛ клипа Vizard как есть, ничего не меняя
+        # (ни субтитров, ни музыки, ни кадрирования). «Ровно то, что сделал Vizard».
+        if os.environ.get("RAW", "0") == "1":
+            subprocess.run(["ffmpeg", "-y", "-ss", "2", "-i", clip, "-frames:v", "1",
+                            "-q:v", "2", os.path.join(OUT, f"raw_{idx}.jpg"), "-loglevel", "error"],
+                           check=False)
+            if SEND:
+                size = os.path.getsize(clip) / 1e6
+                if size <= 49:
+                    tg.send_video(clip, caption=f"Vizard клип {idx} (оригинал, без обработки): {title}")
+                else:
+                    tg.send_message(f"Vizard клип {idx}: {title} — файл {size:.0f} МБ, велик для бота.")
+            print(f"клип {idx}: оригинал Vizard ({'в бот' if SEND else 'превью'})")
+            done += 1
+            continue
         words = rs.transcribe_words(clip)
         ass = rs.build_ass(words, f"work/subs_{idx}.ass")
         out = finish(clip, ass, f"work/short_{idx}.mp4", MUSIC_FILE)
         subprocess.run(["ffmpeg", "-y", "-ss", "2", "-i", out, "-frames:v", "1",
                         "-q:v", "2", os.path.join(OUT, f"short_{idx}.jpg"), "-loglevel", "error"],
                        check=False)
-        title = (c.get("title") or "").strip()
         if SEND:
             size = os.path.getsize(out) / 1e6
             if size <= 49:

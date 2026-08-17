@@ -28,6 +28,10 @@ on:
         description: "1 = чёткий кадр как есть (без размытия/сужения); 0 = размытые края"
         required: false
         default: "1"
+      raw:
+        description: "1 = отправить ОРИГИНАЛ клипа Vizard без обработки"
+        required: false
+        default: "0"
       music_file:
         description: "Фоновая музыка"
         required: false
@@ -52,6 +56,7 @@ jobs:
       SCALE_Y: ${{ github.event.inputs.scale_y || '0.90' }}
       SEND: ${{ github.event.inputs.send || '0' }}
       PLAIN: ${{ github.event.inputs.plain || '1' }}
+      RAW: ${{ github.event.inputs.raw || '0' }}
       MUSIC_FILE: ${{ github.event.inputs.music_file || 'music/anna_piano.mp3' }}
       WHISPER_MODEL: medium
     steps:
