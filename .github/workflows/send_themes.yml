@@ -1,0 +1,28 @@
+# send_themes.yml — отправить еженедельные темы Анне в бот кусками.
+name: send-themes
+
+on:
+  workflow_dispatch:
+    inputs:
+      themes_file:
+        description: "Файл с темами"
+        required: false
+        default: "content/weekly_themes.md"
+
+concurrency:
+  group: send-themes
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      THEMES_FILE: ${{ github.event.inputs.themes_file || 'content/weekly_themes.md' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: python3 -m pip install --quiet requests
+      - name: Отправить темы в бот
+        run: python3 scripts/send_themes.py
