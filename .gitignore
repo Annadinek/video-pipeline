@@ -20,3 +20,6 @@ assets/inserts/_cache/
 
 # рантайм-лог DeepFilterNet (пишется рядом с моделью при запуске deepFilter)
 presets/deepfilternet/*/enhance.log
+
+# веса моделей ClearVoice (качаются в рабочую папку при запуске, ~200 МБ)
+checkpoints/
