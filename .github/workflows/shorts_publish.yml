@@ -23,9 +23,9 @@ on:
         description: "public / unlisted"
         required: false
         default: "public"
-  schedule:
-    # 07:00 UTC = 10:00 по Турции (UTC+3). Каждый день.
-    - cron: "0 7 * * *"
+  # РАСПИСАНИЕ ВЫКЛЮЧЕНО по просьбе Анны (переделываем публикацию как Shorts).
+  # schedule:
+  #   - cron: "0 7 * * *"   # 07:00 UTC = 10:00 по Турции
 
 concurrency:
   group: shorts-publish

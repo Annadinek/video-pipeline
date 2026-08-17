@@ -19,9 +19,18 @@ import requests
 import config
 import tg
 import yt_ops
-from vizard_to_youtube import TAGS, check_status, clean_title, description_for
+from vizard_to_youtube import TAGS, check_status, clean_title
 
 rs = importlib.import_module("resub")  # transcribe_words + build_ass (стиль из env)
+
+# Подпись под Shorts. БЕЗ слова «shorts» (Анна попросила убрать). Ведём в бот.
+HASHTAGS = "#осознаниесебя #подсознание #психология #тревожность #АннаДинэк"
+
+
+def build_desc(title):
+    return (f"{title}\n\n"
+            "Полное видео и запись на консультацию — Telegram @dinekanna_bot\n\n"
+            f"{HASHTAGS}")
 
 API = "https://elb-api.vizard.ai/hvizard-server-front/open-api/v1"
 PROJECT_ID = os.environ["PROJECT_ID"].strip()
@@ -113,8 +122,10 @@ def main():
                             "-q:v", "2", os.path.join(PREVIEW, f"pub_{idx}.jpg"),
                             "-loglevel", "error"], check=False)
             title = clean_title(c.get("title"))
-            desc = description_for(title)
-            vid = yt_ops.upload_video(out, f"{title} #Shorts", desc,
+            desc = build_desc(title)
+            # Заголовок БЕЗ слова «shorts». Ролик — вертикаль ≤3 мин, YouTube сам
+            # классифицирует его как Short по формату кадра и длине.
+            vid = yt_ops.upload_video(out, title, desc,
                                       privacy=PRIVACY, tags=TAGS)
             try:
                 yt_ops.add_to_playlist(vid, config.SHORTS_PLAYLIST_ID)
