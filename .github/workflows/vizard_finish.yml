@@ -40,6 +40,18 @@ on:
         description: "Размер субтитров (44 мелкие, 80 крупные)"
         required: false
         default: "80"
+      sub_hl:
+        description: "Цвет произносимого слова ASS (&H0000FF00 зелёный, &H0000FFFF жёлтый, &H00FFFFFF белый)"
+        required: false
+        default: "&H0000FF00"
+      sub_outline:
+        description: "Толщина чёрной обводки субтитров (2..5)"
+        required: false
+        default: "3"
+      max_words:
+        description: "Слов в строке субтитров (2 компактно, 4 длинно)"
+        required: false
+        default: "2"
       music_file:
         description: "Фоновая музыка"
         required: false
@@ -67,6 +79,9 @@ jobs:
       RAW: ${{ github.event.inputs.raw || '0' }}
       SQUEEZE: ${{ github.event.inputs.squeeze || '0' }}
       FONT_SIZE: ${{ github.event.inputs.font_size || '80' }}
+      SUB_HL: ${{ github.event.inputs.sub_hl || '&H0000FF00' }}
+      SUB_OUTLINE: ${{ github.event.inputs.sub_outline || '3' }}
+      MAX_WORDS: ${{ github.event.inputs.max_words || '2' }}
       MUSIC_FILE: ${{ github.event.inputs.music_file || 'music/anna_piano.mp3' }}
       WHISPER_MODEL: medium
     steps:
