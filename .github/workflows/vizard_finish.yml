@@ -32,6 +32,10 @@ on:
         description: "1 = отправить ОРИГИНАЛ клипа Vizard без обработки"
         required: false
         default: "0"
+      squeeze:
+        description: "Сужение лица 0..1 (0=нет, 0.5=у́же ~в 2р, максимум)"
+        required: false
+        default: "0"
       music_file:
         description: "Фоновая музыка"
         required: false
@@ -57,6 +61,7 @@ jobs:
       SEND: ${{ github.event.inputs.send || '0' }}
       PLAIN: ${{ github.event.inputs.plain || '1' }}
       RAW: ${{ github.event.inputs.raw || '0' }}
+      SQUEEZE: ${{ github.event.inputs.squeeze || '0' }}
       MUSIC_FILE: ${{ github.event.inputs.music_file || 'music/anna_piano.mp3' }}
       WHISPER_MODEL: medium
     steps:

@@ -26,6 +26,10 @@ MUSIC_GAIN = os.environ.get("MUSIC_GAIN", "0.12")
 SCALE_X = float(os.environ.get("SCALE_X", "0.82"))   # по ширине (у́же)
 SCALE_Y = float(os.environ.get("SCALE_Y", "0.90"))   # по высоте (дальше)
 BLUR_SIGMA = os.environ.get("BLUR_SIGMA", "24")
+# SQUEEZE (0..1): максимальное сужение лица. Кадр растягиваем по ВЫСОТЕ в
+# 1/SQUEEZE раз (лицо становится у́же во столько же) и обрезаем по центру обратно
+# до 1080x1920. Без размытия, без чёрных полос. 0 = не сужать. 0.5 = лицо у́же ~в 2р.
+SQUEEZE = float(os.environ.get("SQUEEZE", "0") or "0")
 # PLAIN=1 (по умолчанию): НИЧЕГО не размываем и не сужаем — оставляем чёткий
 # кадр Vizard как есть, только караоке-субтитры + музыка (Анна: размытые края
 # «размазывают лицо», оставить как на её скрине 1). PLAIN=0 — старый режим с
@@ -55,9 +59,15 @@ def finish(clip, ass, out, music):
     audio = (f"[0:a]volume=1.0[a0];[1:a]volume={MUSIC_GAIN}[a1];"
              f"[a0][a1]amix=inputs=2:duration=first[a]")
     if PLAIN:
-        # Чёткий кадр Vizard как есть + караоке-субтитры + музыка. Ничего не
-        # размываем и не сужаем.
-        fc = f"[0:v]ass={ass}[v];" + audio
+        # Чёткий кадр Vizard + караоке-субтитры + музыка. Без размытия.
+        if SQUEEZE and 0 < SQUEEZE < 1:
+            # Максимальное сужение: тянем по высоте, обрезаем центр обратно в 9:16.
+            h2 = int(round(1920 / SQUEEZE / 2) * 2)
+            off = int(((h2 - 1920) // 2) // 2 * 2)
+            vf = f"scale=1080:{h2},crop=1080:1920:0:{off},ass={ass}"
+        else:
+            vf = f"ass={ass}"
+        fc = f"[0:v]{vf}[v];" + audio
     else:
         fw = int(round(1080 * SCALE_X / 2) * 2)
         fh = int(round(1920 * SCALE_Y / 2) * 2)
