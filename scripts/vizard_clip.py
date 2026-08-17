@@ -24,8 +24,9 @@ import tg
 
 API = "https://elb-api.vizard.ai/hvizard-server-front/open-api/v1"
 LANG = os.environ.get("VIZARD_LANG", "ru")
-# 0=авто длина; можно [2,3] для 30–90 c. Берём авто — Vizard сам выбирает лучшее.
-PREFER_LENGTH = [int(x) for x in os.environ.get("VIZARD_PREFER", "0").split(",")]
+# Длина клипов: [2,3] = 30–90 сек (правило Анны — такие клипы YouTube кладёт в
+# Shorts). preferLength: 1=<30, 2=30-60, 3=60-90, 4=>90. По умолчанию 30–90.
+PREFER_LENGTH = [int(x) for x in os.environ.get("VIZARD_PREFER", "2,3").split(",")]
 MAX_SEND = int(os.environ.get("VIZARD_MAX_SEND", "6"))  # сколько клипов слать в бот
 POLL_EVERY = 30
 MAX_WAIT = int(os.environ.get("VIZARD_MAX_WAIT", "1800"))  # до 30 минут
