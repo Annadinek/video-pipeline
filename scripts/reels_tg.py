@@ -36,7 +36,9 @@ def send_message(text, chat_id=None):
 
 
 def send_video(path, caption="", chat_id=None):
-    """Отправить вертикальный ролик файлом. Лимит Bot API на upload — ~50 МБ."""
+    """Отправить вертикальный ролик как ВИДЕО (стрим-превью). ВНИМАНИЕ: Telegram
+    пережимает такое видео → превью может быть размытым. Для качества шлём файлом —
+    см. send_document (это способ по умолчанию для рилс)."""
     url = API.format(token=_token(), method="sendVideo")
     with open(path, "rb") as f:
         r = requests.post(
@@ -50,6 +52,24 @@ def send_video(path, caption="", chat_id=None):
     js = r.json()
     if not js.get("ok"):
         raise RuntimeError(f"Telegram sendVideo: {js}")
+    return js["result"]
+
+
+def send_document(path, caption="", chat_id=None):
+    """Отправить ролик ФАЙЛОМ-ВЛОЖЕНИЕМ (как на скрине Анны: имя файла + размер +
+    кнопка загрузки). Telegram НЕ пережимает документы — качество сохраняется."""
+    url = API.format(token=_token(), method="sendDocument")
+    with open(path, "rb") as f:
+        r = requests.post(
+            url,
+            data={"chat_id": chat_id or config.REELS_ADMIN_CHAT, "caption": caption},
+            files={"document": f},
+            timeout=300,
+        )
+    r.raise_for_status()
+    js = r.json()
+    if not js.get("ok"):
+        raise RuntimeError(f"Telegram sendDocument: {js}")
     return js["result"]
 
 

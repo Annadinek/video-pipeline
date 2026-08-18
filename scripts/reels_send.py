@@ -23,8 +23,9 @@ def main():
     me = reels_tg.get_me()
     print("БОТ РИЛС:", me.get("username"), "| id:", me.get("id"))
 
-    reels_tg.send_video(path, caption=caption)
-    print(f"Отправлено в бот: {os.path.basename(path)}")
+    # Шлём ФАЙЛОМ-ВЛОЖЕНИЕМ (sendDocument) — Telegram не пережимает, качество как есть.
+    reels_tg.send_document(path, caption=caption)
+    print(f"Отправлено в бот (вложением): {os.path.basename(path)}")
 
 
 if __name__ == "__main__":
