@@ -16,6 +16,13 @@ MUSIC_CANDIDATES_TITLE = "Клауд музыка кандидаты"
 # Личный чат Анны (admin). ID не секрет; токен бота — секрет (env TELEGRAM_BOT_TOKEN).
 TELEGRAM_ADMIN_CHAT = int(os.environ.get("TELEGRAM_ADMIN_CHAT", "281187873"))
 
+# --- Telegram РИЛС (Instagram/TikTok) — ОТДЕЛЬНЫЙ бот ---
+# Бот @TiktokInstaloop_bot. Токен — секрет INSTA_BOT_TOKEN (Анна добавила в GitHub
+# Secrets). Чат тот же admin. YouTube-бот (@dinekanna_bot, TELEGRAM_BOT_TOKEN) НЕ трогаем.
+REELS_BOT_TOKEN_ENV = "INSTA_BOT_TOKEN"
+REELS_BOT_USERNAME = "TiktokInstaloop_bot"
+REELS_ADMIN_CHAT = int(os.environ.get("REELS_ADMIN_CHAT", "281187873"))
+
 # --- Рабочие папки ---
 WORK_DIR = os.environ.get("WORK_DIR", "work")     # промежуточные файлы (стираются)
 REVIEW_DIR = os.environ.get("REVIEW_DIR", "review")  # мелкие артефакты для проверки (в репозитории)

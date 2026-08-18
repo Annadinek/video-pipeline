@@ -1,0 +1,32 @@
+# reels-bot-send.yml — отправить один готовый вертикальный ролик в бот РИЛС
+# (@TiktokInstaloop_bot). Токен берётся из секрета INSTA_BOT_TOKEN в момент запуска.
+# YouTube-бот (TELEGRAM_BOT_TOKEN) здесь НЕ используется.
+name: reels-bot-send
+
+on:
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "Путь к видео в репозитории"
+        required: true
+        default: "reels_samples/variant2_nomusic.mp4"
+      caption:
+        description: "Подпись к ролику"
+        required: false
+        default: "Вариант 2 (HyperFrames) — без музыки. Тест отправки в бот рилс."
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Отправить ролик в бот рилс
+        env:
+          INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
+          SEND_FILE: ${{ github.event.inputs.file }}
+          SEND_CAPTION: ${{ github.event.inputs.caption }}
+        working-directory: scripts
+        run: python3 reels_send.py
