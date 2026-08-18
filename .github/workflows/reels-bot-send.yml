@@ -35,5 +35,6 @@ jobs:
           INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
           SEND_FILE: ${{ github.event.inputs.file || 'reels_samples/variant2_nomusic.mp4' }}
           SEND_CAPTION: ${{ github.event.inputs.caption || 'Вариант 2 (HyperFrames) — без музыки. Тест отправки в бот рилс.' }}
-        working-directory: scripts
-        run: python3 reels_send.py
+        # из корня репозитория: SEND_FILE — путь от корня; Python сам добавит
+        # папку scripts/ в sys.path, поэтому import reels_tg/config работает.
+        run: python3 scripts/reels_send.py
