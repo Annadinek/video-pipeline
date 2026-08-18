@@ -4,6 +4,11 @@
 name: reels-bot-send
 
 on:
+  # Тег send-reels-* — одноразовый запуск (пока воркфлоу нет в основной ветке,
+  # обычная кнопка Run workflow недоступна, поэтому пускаем тегом).
+  push:
+    tags:
+      - "send-reels-*"
   workflow_dispatch:
     inputs:
       file:
@@ -26,7 +31,7 @@ jobs:
       - name: Отправить ролик в бот рилс
         env:
           INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
-          SEND_FILE: ${{ github.event.inputs.file }}
-          SEND_CAPTION: ${{ github.event.inputs.caption }}
+          SEND_FILE: ${{ github.event.inputs.file || 'reels_samples/variant2_nomusic.mp4' }}
+          SEND_CAPTION: ${{ github.event.inputs.caption || 'Вариант 2 (HyperFrames) — без музыки. Тест отправки в бот рилс.' }}
         working-directory: scripts
         run: python3 reels_send.py
