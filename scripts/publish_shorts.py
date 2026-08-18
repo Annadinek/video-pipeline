@@ -144,15 +144,16 @@ def main():
             vz_title = c.get("title") or ""
             title = clean_vz(vz_title)[:100].rstrip(" ,—–-") or "Осознание себя"
             desc = build_desc(vz_title)
-            # Режим ОБРАЗЕЦ: показать Анне готовый клип + подпись, НЕ выкладывать.
+            # Показать Анне ТОТ САМЫЙ ролик, что пойдёт в выкладку — файлом
+            # (документом), чтобы Telegram не пережимал и не «размазывал».
             if DRY_RUN:
-                cap = f"ОБРАЗЕЦ {idx} (не выложен)\n\nЗаголовок: {title}\n\n{desc}"
+                cap = f"Ролик {idx} на выкладку\n\nЗаголовок: {title}\n\n{desc}"
                 size = os.path.getsize(out) / 1e6
                 if size <= 49:
-                    tg.send_video(out, caption=cap[:1024])
+                    tg.send_document(out, caption=cap)
                 else:
-                    tg.send_message(cap + f"\n(видео {size:.0f} МБ, велико для бота)")
-                print(f"клип {idx}: образец в бот (не выложен)")
+                    tg.send_message(cap + f"\n(файл {size:.0f} МБ, велик для бота)")
+                print(f"клип {idx}: отправлен файлом (полное качество)")
                 continue
             # Заголовок БЕЗ слова «shorts». Ролик — вертикаль 30–90 сек, YouTube сам
             # классифицирует его как Short по формату кадра и длине.

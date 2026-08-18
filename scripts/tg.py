@@ -41,6 +41,24 @@ def send_photo(path, caption="", chat_id=None):
     return r.json()["result"]
 
 
+def send_document(path, caption="", chat_id=None):
+    """Отправить видео/файл КАК ДОКУМЕНТ — Telegram НЕ пережимает, качество исходное.
+    Так шлём готовые ролики на выкладку, чтобы не было «размазанности» от сжатия."""
+    url = API.format(token=_token(), method="sendDocument")
+    with open(path, "rb") as f:
+        r = requests.post(
+            url,
+            data={"chat_id": chat_id or config.TELEGRAM_ADMIN_CHAT, "caption": caption[:1024]},
+            files={"document": f},
+            timeout=300,
+        )
+    r.raise_for_status()
+    js = r.json()
+    if not js.get("ok"):
+        raise RuntimeError(f"Telegram sendDocument: {js}")
+    return js["result"]
+
+
 def send_audio(audio, title="", caption="", chat_id=None):
     """Отправить аудио. audio может быть URL (Telegram сам скачает) или путь к файлу."""
     url = API.format(token=_token(), method="sendAudio")
