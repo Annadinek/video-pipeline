@@ -165,6 +165,12 @@ def main():
                 print(f"клип {idx}: в плейлист не добавился ({e})")
             status, reason = check_status(vid)
             link = f"https://youtube.com/shorts/{vid}"
+            # Присылаем Анне готовый ролик ФАЙЛОМ + подпись + ссылка (её правило).
+            try:
+                if os.path.getsize(out) / 1e6 <= 49:
+                    tg.send_document(out, caption=f"Выложен ролик {idx}\n{link}\n\n{desc}")
+            except Exception as e:
+                print(f"клип {idx}: файл в бот не ушёл ({e})")
             results.append((idx, title, link, reason))
             state[key] = sorted(set(state.get(key, [])) | {vzid})
             save_state(state)
