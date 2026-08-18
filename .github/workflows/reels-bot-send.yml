@@ -4,11 +4,13 @@
 name: reels-bot-send
 
 on:
-  # Тег send-reels-* — одноразовый запуск (пока воркфлоу нет в основной ветке,
-  # обычная кнопка Run workflow недоступна, поэтому пускаем тегом).
+  # Пуск по файлу-триггеру: меняю state/reels_send_trigger.txt → воркфлоу шлёт ролик.
+  # (обычная кнопка Run workflow недоступна, пока воркфлоу нет в основной ветке.)
   push:
-    tags:
-      - "send-reels-*"
+    branches:
+      - "claude/reels-process-scaffold"
+    paths:
+      - "state/reels_send_trigger.txt"
   workflow_dispatch:
     inputs:
       file:
