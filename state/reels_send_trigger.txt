@@ -1,1 +1,1 @@
-send #3 variant2_nomusic ВЛОЖЕНИЕМ 085201
+send full variant2_full 92s 144535

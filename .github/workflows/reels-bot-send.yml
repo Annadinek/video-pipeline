@@ -16,11 +16,11 @@ on:
       file:
         description: "Путь к видео в репозитории"
         required: true
-        default: "reels_samples/variant2_nomusic.mp4"
+        default: "reels_samples/variant2_full.mp4"
       caption:
         description: "Подпись к ролику"
         required: false
-        default: "Вариант 2 (HyperFrames) — без музыки. Тест отправки в бот рилс."
+        default: "Гарвард — ПОЛНЫЙ ролик (92с, без обрезки), HyperFrames, субтитры, без музыки."
 
 jobs:
   send:
@@ -33,8 +33,8 @@ jobs:
       - name: Отправить ролик в бот рилс
         env:
           INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
-          SEND_FILE: ${{ github.event.inputs.file || 'reels_samples/variant2_nomusic.mp4' }}
-          SEND_CAPTION: ${{ github.event.inputs.caption || 'Вариант 2 (HyperFrames) — без музыки. Тест отправки в бот рилс.' }}
+          SEND_FILE: ${{ github.event.inputs.file || 'reels_samples/variant2_full.mp4' }}
+          SEND_CAPTION: ${{ github.event.inputs.caption || 'Гарвард — ПОЛНЫЙ ролик (92с, без обрезки), HyperFrames, субтитры, без музыки.' }}
         # из корня репозитория: SEND_FILE — путь от корня; Python сам добавит
         # папку scripts/ в sys.path, поэтому import reels_tg/config работает.
         run: python3 scripts/reels_send.py
