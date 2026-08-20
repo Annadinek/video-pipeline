@@ -83,7 +83,8 @@ jobs:
         run: |
           git config user.name "video-pipeline-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add publora_published.json vizard_projects.json 2>/dev/null || true
+          git add publora_published.json 2>/dev/null || true
+          git add vizard_projects.json 2>/dev/null || true
           git commit -m "publora: учёт запланированных + карта видео→проект" || echo "нечего коммитить"
           for i in 1 2 3 4; do
             git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
