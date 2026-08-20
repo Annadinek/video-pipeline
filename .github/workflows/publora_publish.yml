@@ -1,0 +1,76 @@
+# publora_publish.yml — АВТОвыкладка готовых роликов через Publora API.
+# Publora сам публикует в Instagram / TikTok / YouTube. От Анны — только один раз
+# подключить аккаунты в кабинете Publora и добавить ключ PUBLORA_API_KEY в Secrets.
+# Первый раз запускаем вручную (кнопка) с dry_run=1 — проверить ролик; потом реально.
+name: publora-publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Проект Vizard (готовые клипы)"
+        required: false
+        default: "33550351"
+      networks:
+        description: "Сети через запятую (instagram,tiktok,youtube)"
+        required: false
+        default: "instagram,tiktok"
+      max_posts:
+        description: "Сколько роликов запланировать за раз (free Publora = 15/мес)"
+        required: false
+        default: "3"
+      test_minutes:
+        description: "Быстрый тест: поставить через N минут (0 = завтра 10:00)"
+        required: false
+        default: "0"
+      dry_run:
+        description: "1 = собрать ролик и прислать в бот, БЕЗ Publora"
+        required: false
+        default: "0"
+
+concurrency:
+  group: publora-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      PUBLORA_API_KEY: ${{ secrets.PUBLORA_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      PROJECT_ID: ${{ github.event.inputs.project_id || '33550351' }}
+      NETWORKS: ${{ github.event.inputs.networks || 'instagram,tiktok' }}
+      PUBLORA_MAX: ${{ github.event.inputs.max_posts || '3' }}
+      TEST_MINUTES: ${{ github.event.inputs.test_minutes || '0' }}
+      DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+      SQUEEZE: "0"
+      MUSIC_FILE: "music/anna_piano.mp3"
+      MUSIC_GAIN: "0.12"
+      # стиль субтитров — как одобрила Анна (крупные, компактные, зелёная подсветка)
+      FONT_SIZE: "84"
+      MAX_WORDS: "2"
+      SUB_OUTLINE: "3"
+      SUB_HL: "&H0000FF00"
+      WHISPER_MODEL: medium
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          python3 -m pip install --quiet requests faster-whisper
+      - name: Выложить через Publora
+        run: python3 scripts/publora_publish.py
+      - name: Сохранить учёт
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add publora_published.json 2>/dev/null || true
+          git commit -m "publora: учёт запланированных" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
+          done
