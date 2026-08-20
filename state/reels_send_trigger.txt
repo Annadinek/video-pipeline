@@ -1,1 +1,1 @@
-send audio1 2 варианта FIX 172959
+send audio1_img FIX 175209
