@@ -34,7 +34,14 @@ import publora
 rs = importlib.import_module("resub")  # transcribe_words + build_ass (стиль из env)
 
 API = "https://elb-api.vizard.ai/hvizard-server-front/open-api/v1"
-PROJECT_ID = os.environ["PROJECT_ID"].strip()
+PROJECT_ID = os.environ.get("PROJECT_ID", "").strip()
+# Если PROJECT_ID пуст — берём проект по ссылке на видео. Раньше созданный проект
+# запоминаем в vizard_projects.json, чтобы НЕ резать одно и то же видео повторно
+# (у Vizard нет списка проектов, а ссылки на клипы живут 7 дней — потерять id нельзя).
+VIDEO_URL = os.environ.get("VIDEO_URL", "").strip()
+MAP_FILE = "vizard_projects.json"
+# Ссылка на полное видео (ставим в конец подписи — «посмотреть на YouTube»).
+SOURCE_URL = os.environ.get("SOURCE_URL", "").strip()
 NETWORKS = [n.strip().lower() for n in
             os.environ.get("NETWORKS", "instagram,tiktok,youtube").split(",") if n.strip()]
 MAX_POSTS = int(os.environ.get("PUBLORA_MAX", "3"))
@@ -63,7 +70,46 @@ def build_desc(vz_title):
     body = clean_vz(vz_title)
     if len(body) > 200:
         body = body[:200].rsplit(" ", 1)[0].rstrip(" ,—–-") + "…"
-    return f"{body}\n\nЗапись на консультацию — Telegram @dinekanna_bot"
+    parts = [body, "Запись на консультацию — Telegram @dinekanna_bot"]
+    if SOURCE_URL:  # по просьбе Анны — ссылка на полное видео В КОНЦЕ подписи
+        parts.append(f"▶️ Смотреть это видео полностью на YouTube:\n{SOURCE_URL}")
+    return "\n\n".join(parts)
+
+
+def resolve_project():
+    """Определить ID проекта Vizard. Если PROJECT_ID задан — берём его. Иначе по
+    VIDEO_URL: сперва ищем в vizard_projects.json (не режем повторно), а если нет —
+    создаём проект один раз и запоминаем связку видео→проект."""
+    global PROJECT_ID
+    if PROJECT_ID:
+        return PROJECT_ID
+    if not VIDEO_URL:
+        raise SystemExit("нужен PROJECT_ID или VIDEO_URL")
+    mapping = {}
+    if os.path.exists(MAP_FILE):
+        try:
+            mapping = json.load(open(MAP_FILE, encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            mapping = {}
+    if VIDEO_URL in mapping:
+        PROJECT_ID = str(mapping[VIDEO_URL])
+        print(f"Vizard: беру готовый проект {PROJECT_ID} для {VIDEO_URL} (без новой нарезки)")
+        return PROJECT_ID
+    import vizard_clip as vz
+    key = os.environ["VIZARDAI_API_KEY"].strip()
+    url = VIDEO_URL if "://" in VIDEO_URL else f"https://www.youtube.com/watch?v={VIDEO_URL}"
+    print(f"Vizard: проекта для {url} ещё нет — создаю (один раз)")
+    pid = vz.create_project(key, url)
+    vz.wait_for_clips(key, pid)  # дождаться готовности клипов
+    PROJECT_ID = str(pid)
+    mapping[VIDEO_URL] = PROJECT_ID
+    try:
+        with open(MAP_FILE, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+    print(f"Vizard: проект {PROJECT_ID} создан и записан в {MAP_FILE}")
+    return PROJECT_ID
 
 
 def get_clips():
@@ -142,6 +188,7 @@ def platform_settings_for(title):
 
 def main():
     os.makedirs("work", exist_ok=True)
+    resolve_project()
     clips = get_clips()
     if not clips:
         raise SystemExit(f"нет клипов у проекта {PROJECT_ID}")

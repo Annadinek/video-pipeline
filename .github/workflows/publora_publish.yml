@@ -7,10 +7,18 @@ name: publora-publish
 on:
   workflow_dispatch:
     inputs:
-      project_id:
-        description: "Проект Vizard (готовые клипы)"
+      video:
+        description: "Ссылка/ID YouTube исходного видео (если проект ещё не резали)"
         required: false
-        default: "33550351"
+        default: "0FpSB68ZaM8"
+      source_url:
+        description: "Ссылка на полное видео на YouTube (ставим в конец подписи)"
+        required: false
+        default: "https://youtu.be/0FpSB68ZaM8"
+      project_id:
+        description: "Готовый проект Vizard. Пусто = взять/создать по video"
+        required: false
+        default: ""
       networks:
         description: "Сети через запятую (instagram,tiktok,youtube)"
         required: false
@@ -42,11 +50,17 @@ jobs:
       VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
       PUBLORA_API_KEY: ${{ secrets.PUBLORA_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      PROJECT_ID: ${{ github.event.inputs.project_id || '33550351' }}
+      PROJECT_ID: ${{ github.event.inputs.project_id || '' }}
+      VIDEO_URL: ${{ github.event.inputs.video || '' }}
+      SOURCE_URL: ${{ github.event.inputs.source_url || '' }}
       NETWORKS: ${{ github.event.inputs.networks || 'instagram,tiktok' }}
       PUBLORA_MAX: ${{ github.event.inputs.max_posts || '3' }}
       TEST_MINUTES: ${{ github.event.inputs.test_minutes || '0' }}
       DRY_RUN: ${{ github.event.inputs.dry_run || '0' }}
+      # для создания проекта Vizard по ссылке (клипы 30–90с, без субтитров Vizard)
+      VIZARD_PREFER: "2,3"
+      SUBTITLE_SWITCH: "0"
+      HEADLINE_SWITCH: "0"
       SQUEEZE: "0"
       MUSIC_FILE: "music/anna_piano.mp3"
       MUSIC_GAIN: "0.12"
@@ -69,8 +83,8 @@ jobs:
         run: |
           git config user.name "video-pipeline-bot"
           git config user.email "bot@users.noreply.github.com"
-          git add publora_published.json 2>/dev/null || true
-          git commit -m "publora: учёт запланированных" || echo "нечего коммитить"
+          git add publora_published.json vizard_projects.json 2>/dev/null || true
+          git commit -m "publora: учёт запланированных + карта видео→проект" || echo "нечего коммитить"
           for i in 1 2 3 4; do
             git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
           done
