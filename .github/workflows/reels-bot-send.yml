@@ -33,8 +33,9 @@ jobs:
       - name: Отправить ролик в бот рилс
         env:
           INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
-          SEND_FILE: ${{ github.event.inputs.file || 'reels_samples/variant2_full.mp4' }}
-          SEND_CAPTION: ${{ github.event.inputs.caption || 'Гарвард — ПОЛНЫЙ ролик (92с, без обрезки), HyperFrames, субтитры, без музыки.' }}
+          SEND_INTRO: "🎧 Аудио-ролик «Тишина, от которой убегаешь» — 2 варианта (полностью, без обрезки). Выбери, какой нравится."
+          SEND_FILES: "reels_samples/audio1_hyper.mp4, reels_samples/audio1_sam.mp4"
+          SEND_CAPTIONS: "Вариант 1 — HyperFrames: анимированный фон + заголовок + субтитры с подсветкой. 74с.||Вариант 2 — наш: спокойный фон + заголовок + субтитры с подсветкой. 74с."
         # из корня репозитория: SEND_FILE — путь от корня; Python сам добавит
         # папку scripts/ в sys.path, поэтому import reels_tg/config работает.
         run: python3 scripts/reels_send.py
