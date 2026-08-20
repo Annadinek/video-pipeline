@@ -33,9 +33,9 @@ jobs:
       - name: Отправить ролик в бот рилс
         env:
           INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
-          SEND_INTRO: "🎧 Аудио «Тишина, от которой убегаешь» — ПЕРЕДЕЛАЛА с картинками по твоим вставкам. Проверь направление."
-          SEND_FILES: "reels_samples/audio1_img.mp4"
-          SEND_CAPTIONS: "Аудио «Тишина» — с полноэкранными вставками по словам + субтитры. 74с, без обрезки, без музыки."
+          SEND_INTRO: "🎧 Аудио «Тишина» — НАШ вариант: паузы срезаны (67с), 13 меняющихся картинок по смыслу, субтитры. HyperFrames-вариант пришлю следом."
+          SEND_FILES: "reels_samples/audio2_ours.mp4"
+          SEND_CAPTIONS: "Аудио «Тишина» — НАШ вариант: паузы срезаны, много картинок, субтитры с подсветкой. 67с, без музыки."
         # из корня репозитория: SEND_FILE — путь от корня; Python сам добавит
         # папку scripts/ в sys.path, поэтому import reels_tg/config работает.
         run: python3 scripts/reels_send.py
