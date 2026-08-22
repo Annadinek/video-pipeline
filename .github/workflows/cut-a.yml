@@ -1,0 +1,237 @@
+name: cut-a
+
+# ВАРИАНТ A (решение Анны): режем ВЕРТИКАЛЬ из НАШЕГО обработанного файла,
+# чтобы не терять звук/стаб/цвет.
+# Полная цепочка: скачать → звук → стабилизация → цвет → clip_color.mp4
+#   → выкладываем clip_color.mp4 релиз-ассетом (публичный URL)
+#   → Vizard режет его как videoType=1 (субтитры Vizard ВЫКЛ)
+#   → забираем вертикальные клипы
+#   → УДАЛЯЕМ релиз-ассет сразу
+#   → рисуем СВОИ субтитры на каждом клипе (перераспознаём каждый — пересчёт
+#     таймингов под клип)
+# Публикацию НЕ делаем. В артефактах — вертикальные клипы с субтитрами.
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+        default: 'https://www.youtube.com/watch?v=LjkSHpRdaPk'
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '0:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять'
+        required: false
+        default: '180'
+        type: string
+  push:
+    branches: ['claude/video-pipeline-scaffold-gacj3u']
+    paths: ['.github/workflows/cut-a.yml']
+
+permissions:
+  contents: write   # нужен для временного релиз-ассета
+
+jobs:
+  cut-a:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      URL: ${{ inputs.url || 'https://www.youtube.com/watch?v=LjkSHpRdaPk' }}
+      START: ${{ inputs.start || '0:00' }}
+      SECONDS_ARG: ${{ inputs.seconds || '180' }}
+      TAG: viztmp-${{ github.run_id }}
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Ставим Deno (движок JS для yt-dlp)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      - name: Ставим yt-dlp, ffmpeg, OpenCV, whisper, шрифты
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs "opencv-python-headless<5" numpy requests faster-whisper
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          sudo apt-get install -y -qq fonts-dejavu-core || true
+
+      - name: Ставим статический ffmpeg для стабилизации
+        run: |
+          curl -fsSL -o /tmp/ff.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          mkdir -p "$HOME/ffstatic"
+          tar xf /tmp/ff.tar.xz -C "$HOME/ffstatic" --strip-components=1
+
+      - name: Ставим DeepFilterNet (CPU)
+        run: |
+          python -m pip install deepfilternet==0.5.6
+          python -m pip install torch==2.0.1 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Готовим отчёт
+        run: |
+          mkdir -p outputs/run
+          {
+            echo "=== ВАРИАНТ A: нарезка из обработанного файла ==="
+            echo "url=$URL  start=$START  seconds=$SECONDS_ARG"
+            echo "этап | код | секунды | что вышло"
+            echo "-----------------------------------"
+          } > outputs/run/report.txt
+
+      - name: 1) Скачать
+        continue-on-error: true
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          t0=$(date +%s); set +e
+          python scripts/fetch_youtube.py --url "$URL" --output outputs/run/clip.mp4 --start "$START" --seconds "$SECONDS_ARG"
+          rc=$?; set -e; t1=$(date +%s)
+          echo "1-скачать | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip.mp4 2>/dev/null || echo нет)" >> outputs/run/report.txt
+          exit $rc
+
+      - name: 2) Звук
+        continue-on-error: true
+        run: |
+          t0=$(date +%s); set +e
+          python scripts/audio_clean.py --input outputs/run/clip.mp4 --output outputs/run/clip_audio_clean.mp4
+          rc=$?; set -e; t1=$(date +%s)
+          echo "2-звук | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip_audio_clean.mp4 2>/dev/null || echo нет)" >> outputs/run/report.txt
+          exit $rc
+
+      - name: 3) Стабилизация
+        continue-on-error: true
+        run: |
+          t0=$(date +%s); set +e
+          export STAB_FFMPEG="$HOME/ffstatic/ffmpeg"; export STAB_FFPROBE="$HOME/ffstatic/ffprobe"
+          python scripts/stabilize.py --input outputs/run/clip_audio_clean.mp4 --output outputs/run/clip_stab.mp4
+          rc=$?; set -e; t1=$(date +%s)
+          echo "3-стабилизация | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip_stab.mp4 2>/dev/null || echo нет)" >> outputs/run/report.txt
+          exit $rc
+
+      - name: 4) Цвет
+        continue-on-error: true
+        run: |
+          t0=$(date +%s); set +e
+          python scripts/color.py --input outputs/run/clip_stab.mp4 --output outputs/run/clip_color.mp4
+          rc=$?; set -e; t1=$(date +%s)
+          echo "4-цвет | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip_color.mp4 2>/dev/null || echo нет)" >> outputs/run/report.txt
+          exit $rc
+
+      - name: 5) Выкладываю clip_color.mp4 релиз-ассетом
+        id: upload
+        continue-on-error: true
+        run: |
+          if [ ! -f outputs/run/clip_color.mp4 ]; then echo "нет clip_color.mp4 — нечего резать"; exit 1; fi
+          t0=$(date +%s)
+          rel=$(curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$REPO/releases" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"временный файл для нарезки Vizard\",\"prerelease\":true,\"target_commitish\":\"${{ github.sha }}\"}")
+          RID=$(echo "$rel" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("id",""))')
+          if [ -z "$RID" ]; then echo "не создал релиз: $rel"; exit 1; fi
+          echo "RELEASE_ID=$RID" >> "$GITHUB_ENV"
+          up=$(curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: video/mp4" \
+            "https://uploads.github.com/repos/$REPO/releases/$RID/assets?name=clip_color.mp4" \
+            --data-binary @outputs/run/clip_color.mp4)
+          AURL=$(echo "$up" | python3 -c 'import sys,json; print(json.load(sys.stdin).get("browser_download_url",""))')
+          if [ -z "$AURL" ]; then echo "не залил ассет: $up"; exit 1; fi
+          echo "ASSET_URL=$AURL" >> "$GITHUB_ENV"
+          t1=$(date +%s)
+          echo "5-релиз-ассет | 0 | $((t1-t0)) | $AURL" >> outputs/run/report.txt
+          echo "ассет: $AURL"
+
+      - name: 6) Нарезка Vizard (videoType=1, субтитры выкл)
+        continue-on-error: true
+        env:
+          VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+        run: |
+          if [ -z "$ASSET_URL" ]; then echo "нет ASSET_URL — пропускаю"; exit 1; fi
+          t0=$(date +%s); set +e
+          python scripts/vizard_cut_file.py --url "$ASSET_URL" --out-dir outputs/clips --lang ru
+          rc=$?; set -e; t1=$(date +%s)
+          n=$(ls -d outputs/clips/clip_* 2>/dev/null | wc -l)
+          echo "6-нарезка Vizard | $rc | $((t1-t0)) | клипов: $n" >> outputs/run/report.txt
+          exit $rc
+
+      - name: 7) Удаляю релиз-ассет (сразу после нарезки, с проверкой)
+        if: always()
+        run: |
+          if [ -z "$RELEASE_ID" ]; then echo "релиза не было — удалять нечего"; exit 0; fi
+          ok=0
+          for i in 1 2 3; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$REPO/releases/$RELEASE_ID")
+            # 204 — удалён, 404 — уже нет: и то и то значит «ассета в релизе больше нет»
+            if [ "$code" = "204" ] || [ "$code" = "404" ]; then ok=1; break; fi
+            echo "удаление релиза: код $code, повтор $i"; sleep $((i*2))
+          done
+          # тег — косметика (ассет уносит удаление релиза); не валимся из-за него
+          curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/$REPO/git/refs/tags/$TAG" || true
+          if [ "$ok" = "1" ]; then
+            echo "релиз удалён — ассет больше не публичный"
+          else
+            echo "::error::НЕ УДАЛОСЬ удалить релиз $RELEASE_ID — ассет $ASSET_URL может остаться публичным!"
+            exit 1
+          fi
+
+      - name: 7.5) Кадры сырых клипов Vizard (проверка на двойные субтитры)
+        if: always()
+        run: |
+          for c in outputs/clips/clip_*/clip.mp4; do
+            [ -f "$c" ] || continue
+            d=$(dirname "$c")
+            dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$c" 2>/dev/null)
+            mid=$(python3 -c "print(max(0.5, float('${dur:-2}')/2))" 2>/dev/null || echo 1.0)
+            ffmpeg -y -hide_banner -loglevel error -ss 1.0 -i "$c" -frames:v 1 -q:v 3 "$d/frame_raw_a.jpg" || true
+            ffmpeg -y -hide_banner -loglevel error -ss "$mid" -i "$c" -frames:v 1 -q:v 3 "$d/frame_raw_b.jpg" || true
+          done
+          echo "кадры сырых клипов Vizard готовы (frame_raw_*.jpg)"
+
+      - name: 8) Свои субтитры на каждом клипе (перераспознаём под клип)
+        continue-on-error: true
+        run: |
+          if [ ! -d outputs/clips ] || [ -z "$(ls -d outputs/clips/clip_* 2>/dev/null)" ]; then
+            echo "нет клипов — субтитры пропускаю"; exit 1; fi
+          t0=$(date +%s); set +e
+          python scripts/subtitles.py --clips-dir outputs/clips --transcribe
+          rc=$?; set -e; t1=$(date +%s)
+          n=$(find outputs/clips -name clip_subs.mp4 2>/dev/null | wc -l)
+          echo "8-субтитры | $rc | $((t1-t0)) | с субтитрами: $n" >> outputs/run/report.txt
+          exit $rc
+
+      - name: Сводка
+        if: always()
+        run: |
+          {
+            echo ""
+            echo "=== КЛИПЫ С СУБТИТРАМИ ==="
+            for f in outputs/clips/clip_*/clip_subs.mp4; do
+              [ -f "$f" ] || continue
+              v=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$f" 2>/dev/null)
+              d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" 2>/dev/null)
+              a=$(ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$f" 2>/dev/null || echo нет)
+              echo "$f: ${v:-?} | ${d:-?}с | звук:${a:-нет}"
+            done
+          } >> outputs/run/report.txt
+          echo "========== ОТЧЁТ =========="; cat outputs/run/report.txt
+
+      - name: Отдаём вертикальные клипы с субтитрами
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cut-a
+          path: |
+            outputs/clips/clip_*/clip_subs.mp4
+            outputs/clips/clip_*/frame_raw_a.jpg
+            outputs/clips/clip_*/frame_raw_b.jpg
+            outputs/clips/clips.json
+            outputs/run/report.txt
+          if-no-files-found: ignore

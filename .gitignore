@@ -1,5 +1,7 @@
 # Промежуточные файлы обработки (стираются на каждой машине)
 work/
+# Выходы этапов (клипы, отчёты, json прогонов) — в репозиторий не кладём
+outputs/
 # Кэш Python
 __pycache__/
 *.pyc
@@ -8,9 +10,19 @@ __pycache__/
 *.mkv
 *.webm
 *.wav
+*.m4a
 # Но обложки/субтитры проверки хранить нужно
 !review/*.jpg
 !review/*.srt
+
+# кэш скачанного с Pexels (не коммитим)
+assets/inserts/_cache/
+
+# рантайм-лог DeepFilterNet (пишется рядом с моделью при запуске deepFilter)
+presets/deepfilternet/*/enhance.log
+
+# веса моделей ClearVoice (качаются в рабочую папку при запуске, ~200 МБ)
+checkpoints/
 # HyperFrames (HeyGen, Apache 2.0) — ставится локально `npx skills add heygen-com/hyperframes`.
 # Инструмент, в git не храним (20 МБ). Файлы остаются на диске для работы.
 .agents/

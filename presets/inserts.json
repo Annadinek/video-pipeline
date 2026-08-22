@@ -1,0 +1,40 @@
+{
+  "_settings": {
+    "card_width_pct": 33,
+    "margin_pct": 5,
+    "fade_seconds": 0.4,
+    "default_position": "top",
+    "text_font": "DejaVu Sans",
+    "text_size_pct": 8,
+    "text_color": "FFFFFF",
+    "plate_color": "000000",
+    "plate_opacity": 0.6,
+    "pexels_orientation": "portrait"
+  },
+
+  "как показало исследование": {
+    "type": "card",
+    "file": "assets/inserts/study.png",
+    "seconds": 5,
+    "position": "top"
+  },
+  "в книге сказано": {
+    "type": "card",
+    "file": "assets/inserts/book.png",
+    "seconds": 5,
+    "position": "top"
+  },
+  "смотри сюда": {
+    "type": "card",
+    "search": "circle abstract loop",
+    "media": "video",
+    "seconds": 4,
+    "position": "top"
+  },
+  "цифры говорят": {
+    "type": "text",
+    "text": "ЗАМЕНИ НА ЦИФРУ",
+    "seconds": 4,
+    "position": "top"
+  }
+}
