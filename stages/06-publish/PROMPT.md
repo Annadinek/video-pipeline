@@ -6,12 +6,17 @@
 
 ## ЧТО ДЕЛАЮ
 - если qa.passed false — НЕ публикую
-- если true — заливаю на YouTube через скилл `youtube-upload`
+- если true — публикую те же вертикальные нарезки на ТРИ площадки:
+  - **YouTube Shorts** — `scripts/vizard_to_youtube.py` (свои квоты, обложки, плейлист);
+  - **Instagram Reels** и **TikTok** — `scripts/publish_socials.py` (через сам Vizard,
+    эндпоинт `project/publish-video`; аккаунты Анна один раз подключает в Vizard).
+  Те же клипы Vizard и подписи (`captions_freedom.json`), у каждой площадки — свой учёт
+  выложенного (`shorts_published.json` / `socials_published.json`), чтобы не дублировать.
 - складываю пакет для планера в outputs/ready/[id]/
 - отправляю Анне в Telegram уведомление с кнопками «Выпускаем» и «Переделать»
 
 ## ЧТО ОТДАЮ
-- ссылки, запись в state/history.json
+- ссылки по всем площадкам, запись в state/history.json
 
 ## КОГДА СТОП
 - test-mode.txt = ON → публиковать только в тестовый аккаунт

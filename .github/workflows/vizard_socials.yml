@@ -1,0 +1,81 @@
+# vizard_socials.yml — публикует клипы Vizard в Instagram Reels и TikTok
+# (через сам Vizard, эндпоинт publish-video). Это соцсети-«сестра» кнопки
+# vizard-youtube: тот же проект Vizard и те же вертикальные нарезки, только
+# площадки Instagram + TikTok. YouTube грузится отдельной кнопкой vizard-youtube.
+#
+# Правило Анны 22: публикуем ТОЛЬКО после её «ок» по роликам — поэтому кнопка
+# ручная (workflow_dispatch), без расписания.
+#
+# Что нужно один раз: подключить Instagram и TikTok в интерфейсе Vizard
+# (Settings → Social Accounts) и иметь секрет VIZARDAI_API_KEY.
+name: vizard-socials
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Готовый проект Vizard (те же клипы, что в YouTube). Пусто = новая нарезка по ссылке"
+        required: false
+        default: ""
+      video:
+        description: "Ссылка/ID видео — только если project_id пуст (создаст новую нарезку, платно)"
+        required: false
+        default: ""
+      platforms:
+        description: "Куда выкладывать (через запятую): instagram,tiktok"
+        required: false
+        default: "instagram,tiktok"
+      social_max:
+        description: "Сколько клипов за раз на каждую площадку"
+        required: false
+        default: "3"
+      init_mark:
+        description: "Только отметить N клипов как уже выложенные (учёт), без публикации: 1/0"
+        required: false
+        default: "0"
+      ai_caption:
+        description: "Пустая подпись — Vizard сам напишет текст и хэштеги: 1/0"
+        required: false
+        default: "0"
+      captions_file:
+        description: "Файл с подписями по номеру клипа (JSON). Пусто = заголовок Vizard"
+        required: false
+        default: "captions_freedom.json"
+
+concurrency:
+  group: vizard-socials
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      VIZARD_PROJECT_ID: ${{ github.event.inputs.project_id }}
+      VIDEO_URL: ${{ github.event.inputs.video }}
+      SOCIAL_PLATFORMS: ${{ github.event.inputs.platforms || 'instagram,tiktok' }}
+      SOCIAL_MAX: ${{ github.event.inputs.social_max || '3' }}
+      INIT_MARK: ${{ github.event.inputs.init_mark || '0' }}
+      AI_CAPTION: ${{ github.event.inputs.ai_caption || '0' }}
+      CAPTIONS_FILE: ${{ github.event.inputs.captions_file || 'captions_freedom.json' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Выложить клипы в Instagram Reels и TikTok
+        run: python3 scripts/publish_socials.py
+      - name: Сохранить учёт выложенного
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add socials_published.json log.md 2>/dev/null || true
+          git commit -m "соцсети: учёт выложенного в Instagram/TikTok" || echo "нечего коммитить"
+          BR="${GITHUB_REF_NAME}"
+          for i in 1 2 3 4; do
+            git pull --rebase origin "$BR" && git push origin "HEAD:$BR" && break || sleep $((i*3))
+          done
