@@ -1,0 +1,90 @@
+{
+  "_комментарий": "Спецификация этапа reels-process (вертикаль для Instagram/TikTok). Числа приняты Анной 2026-08-15. Vizard тут НЕ используется. Обработку проверяем на одном тестовом ролике, потом закрепляем.",
+
+  "io": {
+    "account": "dnkanna2005@gmail.com",
+    "input_folder": "reels_input",
+    "ready_folder": "reels_ready",
+    "delete_source_after_ready": true,
+    "_delete_note": "Исходник из reels_input удалять ТОЛЬКО после того, как готовый ролик записан в reels_ready. На диске Анны ~3.49 ГБ — без удаления место кончится примерно через 25 роликов."
+  },
+
+  "audio": {
+    "denoise": "deepfilternet",
+    "dry_mix": 0.15,
+    "_dry_mix_note": "подмес сухого сигнала 0.15 — решение принято и проверено, другое не подбирать",
+    "loudnorm_i": -14,
+    "true_peak_db": -1.0
+  },
+
+  "cut_pauses": {
+    "silence_db": -35,
+    "min_pause_sec": 0.35,
+    "keep_edge_sec": 0.1,
+    "_tempo_ref": "образец Анны: 48 склеек за 60 с → склейка каждые 1.2–2 с"
+  },
+
+  "zoom": {
+    "filter": "zoompan",
+    "from": 1.00,
+    "to": 1.12,
+    "seconds": 2,
+    "on_semantic_phrase": "медленное приближение 1.00→1.12 за 2 с",
+    "on_pause": "отъезд обратно",
+    "center": "по лицу — координаты из детекции лица",
+    "opencv_version": "4.x",
+    "_opencv_note": "OpenCV только 4.x, 5.x не ставить"
+  },
+
+  "subtitles": {
+    "engine": "faster-whisper",
+    "model": "large-v3",
+    "lang": "ru",
+    "word_timestamps": true,
+    "mode": "пословно: текущее слово подсвечено, остальные обычные",
+    "font": "без засечек, белый",
+    "outline_px": 3,
+    "size_frac_of_height": 0.0556,
+    "_size_note": "примерно 1/18 высоты кадра (1920/18 ≈ 107 px)",
+    "position": "нижняя треть",
+    "margin_bottom_frac": 0.18,
+    "forbidden_check": "brain/FORBIDDEN.md — при совпадении НЕ выпускать и написать в бот"
+  },
+
+  "music": {
+    "source": "Фонотека YouTube Studio (только — чужие треки дают страйки)",
+    "loudness_lufs": -22,
+    "_note": "громкость музыки −22 LUFS под голосом"
+  },
+
+  "output": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "codec": "H.264",
+    "bitrate": "8M"
+  },
+
+  "captions_source": {
+    "sheet_id": "1PZtJO9uaUukdgCPbCjxAdOx0iDevaZNH0VxjFLleHFc",
+    "section": "План выкладки",
+    "columns": ["Текст под запись голосом", "Подпись под пост", "Вопрос в конце"]
+  },
+
+  "bot": {
+    "url": "http://t.me/TiktokInstaloop_bot",
+    "token_env": "REELS_BOT_TOKEN",
+    "chat_id_env": "REELS_CHAT_ID",
+    "sends": [
+      "готовый ролик",
+      "подпись под пост",
+      "вопрос в конце",
+      "обложка — кадр из ролика на 2-й секунде"
+    ]
+  },
+
+  "publish": {
+    "enabled": false,
+    "_note": "Публикацию пока НЕ подключаем. Сначала Анна смотрит готовое в боте."
+  }
+}

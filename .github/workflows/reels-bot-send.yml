@@ -1,0 +1,50 @@
+# reels-bot-send.yml — отправить один готовый вертикальный ролик в бот РИЛС
+# (@TiktokInstaloop_bot). Токен берётся из секрета INSTA_BOT_TOKEN в момент запуска.
+# YouTube-бот (TELEGRAM_BOT_TOKEN) здесь НЕ используется.
+name: reels-bot-send
+
+on:
+  # Пуск по файлу-триггеру: меняю state/reels_send_trigger.txt → воркфлоу шлёт ролик.
+  # (обычная кнопка Run workflow недоступна, пока воркфлоу нет в основной ветке.)
+  push:
+    branches:
+      - "claude/reels-process-scaffold"
+    paths:
+      - "state/reels_send_trigger.txt"
+  workflow_dispatch:
+    inputs:
+      file:
+        description: "Путь к видео в репозитории"
+        required: true
+        default: "reels_samples/variant2_full.mp4"
+      caption:
+        description: "Подпись к ролику"
+        required: false
+        default: "Гарвард — ПОЛНЫЙ ролик (92с, без обрезки), HyperFrames, субтитры, без музыки."
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Отправить ролик в бот рилс
+        env:
+          INSTA_BOT_TOKEN: ${{ secrets.INSTA_BOT_TOKEN }}
+          SEND_INTRO: "🎧 Аудио-2 «Ты успокоилась» — ВАРИАНТ 3 (HyperFrames): третий набор кадров + зум + прогресс-бар, субтитры по центру с ГОЛУБОЙ подсветкой. 31с. Это все 3 варианта на это аудио (картинки и субтитры у каждого разные)."
+          SEND_FILES: "reels_samples/audio2ok_hyper.mp4"
+          SEND_CAPTIONS: |
+            Вариант 3 (HyperFrames). Подпись для Instagram (та же на все 3 варианта):
+
+            Ты сказала себе «всё хорошо» — а плечи всё ещё у ушей.
+
+            Голова умеет договариваться. Тело — нет. Пока внутри режим «на меня нападают», любое решение будет из страха. А потом жалеешь.
+
+            Ты не успокоилась. Ты себя уговорила. Проверь прямо сейчас: челюсть, плечи, живот. Где сжато — выдохни туда. Сначала верни тело, потом решай.
+
+            #нервнаясистема #тревога #спокойствие #психосоматика #самопомощь #осознанность #психология #дыхание #рилс #рек
+        # из корня репозитория: SEND_FILE — путь от корня; Python сам добавит
+        # папку scripts/ в sys.path, поэтому import reels_tg/config работает.
+        run: python3 scripts/reels_send.py
