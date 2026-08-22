@@ -23,6 +23,7 @@ loop.py — двигает конвейер на один шаг.
 
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 
@@ -31,6 +32,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_DIR = os.path.join(ROOT, "state")
 LOG_DIR = os.path.join(ROOT, "logs")
 STAGES_DIR = os.path.join(ROOT, "stages")
+SCRIPTS_DIR = os.path.join(ROOT, "scripts")
+READY_DIR = os.path.join(ROOT, "outputs", "ready")
 INBOX_LINKS = os.path.join(ROOT, "inbox", "links.txt")
 
 TRIGGER = os.path.join(STATE_DIR, "trigger.txt")
@@ -145,6 +148,57 @@ def report(video, stage, done, stuck, nxt):
     print("==================")
 
 
+def _vid_dir(current):
+    """Папка ролика outputs/ready/[id]/ (id или 'current')."""
+    vid = str(current.get("id") or "current")
+    d = os.path.join(READY_DIR, vid)
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def stage_command(stage, current):
+    """
+    argv для этапа. None — этап-пустышка (для готового видео план/скрипт/подписи
+    делаются вне loop). Цепочка файлов в outputs/ready/[id]/.
+    """
+    d = _vid_dir(current)
+    p = lambda name: os.path.join(d, name)
+    S = lambda name: os.path.join(SCRIPTS_DIR, name)
+    py = sys.executable
+    clip, stab, color = p("clip.mp4"), p("clip_stab.mp4"), p("clip_color.mp4")
+    subs, inserts, audio, clean = p("clip_subs.mp4"), p("clip_inserts.mp4"), p("clip_audio.mp4"), p("clip_clean.mp4")
+    table = {
+        "00-plan":       None,   # видео уже есть — план не нужен
+        "01-script":     None,   # сценарий уже реализован в видео
+        "02a-dupes":     [py, S("find_dupes.py"), "--input", clip],
+        "02c-stab":      [py, S("stabilize.py"), "--input", clip, "--output", stab],
+        "03-color":      [py, S("color.py"), "--input", stab, "--output", color],
+        "03b-subtitles": [py, S("subtitles.py"), "--input", color, "--output", subs],
+        "03c-inserts":   [py, S("inserts.py"), "--input", subs, "--output", inserts],
+        "03d-audio-hf":  [py, S("audio_hf.py"), "--input", inserts, "--output", audio],
+        "03e-strip-subs":[py, S("strip_subs.py"), "--video", color, "--audio", audio, "--output", clean],
+        "03a-cut":       [py, S("vizard_cut_file.py"), "--input", clean, "--out-dir", p("clips")],
+        "04-caption":    None,   # подписи — отдельный шаг/скрипт позже
+        "05-qa":         None,   # проверка — отдельный шаг позже
+        "06-publish":    None,   # публикация — отдельный шаг позже
+    }
+    return table.get(stage, None)
+
+
+def run_stage(stage, current, mode):
+    """Выполнить этап. Возвращает (успех, сообщение)."""
+    cmd = stage_command(stage, current)
+    if cmd is None:
+        return True, "этап-пустышка (делается вне loop)"
+    script = cmd[1]
+    if not os.path.exists(script):
+        return False, f"нет скрипта: {os.path.basename(script)} (напишется на ШАГЕ 3)"
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return False, (proc.stderr or proc.stdout or "").strip()[-300:]
+    return True, "ok"
+
+
 def main():
     # 0. ключи
     missing = [k for k in REQUIRED if not os.environ.get(k)]
@@ -180,45 +234,47 @@ def main():
         pipeline["current"] = current
         write_json(PIPELINE, pipeline)
 
-    stage_index = current.get("stage_index", 0)
-    if stage_index >= len(STAGES):
-        # 8. дошли до конца — записать в history и очистить current
-        finish_video(pipeline, current)
-        return
-
-    stage_name = STAGES[stage_index]
-    prompt_path = os.path.join(STAGES_DIR, stage_name, "PROMPT.md")
-
-    # 4. открыть PROMPT.md
-    if not os.path.exists(prompt_path):
-        log_error(f"нет файла этапа: {prompt_path}")
-        report(current.get("id"), stage_name, "—", "нет PROMPT.md", "проверить stages/")
-        return
-
-    # 4.1 режим
+    # 4-7. Гоним этапы по STAGES один за другим, пока конец или блок.
     mode = read_text(TEST_MODE, "OFF")
-    log_api(f"этап {stage_name}, режим {mode}, ролик {current.get('id')}")
+    while current.get("stage_index", 0) < len(STAGES):
+        si = current["stage_index"]
+        stage = STAGES[si]
+        prompt_path = os.path.join(STAGES_DIR, stage, "PROMPT.md")
+        if not os.path.exists(prompt_path):
+            log_error(f"нет файла этапа: {prompt_path}")
+            report(current.get("id"), stage, "—", "нет PROMPT.md", "проверить stages/")
+            write_json(PIPELINE, pipeline)
+            return
 
-    # 5-7. Выполнение этапа делает оркестратор конвейера (Claude Code читает PROMPT.md
-    # и выполняет задачу этапа). Здесь — каркас: состояние, попытки, журналы.
-    # Реальная работа этапа подключается тут:
-    #     result = run_stage(stage_name, prompt_path, current, mode)
-    # Пока каркас только продвигает закладку и ведёт учёт попыток.
+        log_api(f"этап {stage}, режим {mode}, ролик {current.get('id')}")
+        ok, msg = run_stage(stage, current, mode)
 
-    attempts = current.get("attempts", 0)
-    # Заготовка: этап считается требующим выполнения оркестратором.
-    # Каркас фиксирует, что дошли до этого этапа, и на этом останавливается,
-    # чтобы оркестратор выполнил PROMPT.md. Логику успеха/неудачи ниже
-    # подключит реальный run_stage.
+        if ok:
+            log_api(f"этап {stage}: OK — {msg}")
+            current["stage_index"] = si + 1
+            current["attempts"] = 0
+            pipeline["current"] = current
+            write_json(PIPELINE, pipeline)
+            continue
 
-    report(
-        current.get("id"),
-        stage_name,
-        f"этап открыт (PROMPT.md), режим {mode}, попытка {attempts + 1}",
-        "—",
-        f"выполнить задачу этапа {stage_name} по его PROMPT.md",
-    )
-    write_json(PIPELINE, pipeline)
+        # неудача этапа
+        current["attempts"] = current.get("attempts", 0) + 1
+        log_error(f"этап {stage}: не удался ({current['attempts']}/2) — {msg}")
+        pipeline["current"] = current
+        if current["attempts"] >= 2:  # две попытки — в blocked (правило 15)
+            blocked = dict(current, blocked_stage=stage, reason=msg)
+            pipeline.setdefault("blocked", []).append(blocked)
+            pipeline["current"] = None
+            write_json(PIPELINE, pipeline)
+            report(current.get("id"), stage, "—", f"в blocked: {msg}", f"починить этап {stage}")
+            return
+        write_json(PIPELINE, pipeline)
+        report(current.get("id"), stage, "—", f"ошибка ({current['attempts']}/2): {msg}", f"повтор {stage}")
+        return
+
+    # 8. все этапы пройдены
+    finish_video(pipeline, current)
+    report(current.get("id"), "готово", "все этапы пройдены", "—", "ролик собран")
 
 
 def finish_video(pipeline, current):
