@@ -9,9 +9,10 @@ color.py — цвет и сглаживание лица (кожи).
 1. Измеряем СОДЕРЖИМОЕ кадра через ffmpeg signalstats (не заголовок файла):
    средняя яркость и разброс тонов, насыщенность, пересветы и провалы в тенях.
 2. Цвет. Есть LUT presets/cinema.cube — красим по нему (lut3d). Нет —
-   базовая коррекция eq. В авто-режиме параметры eq ПОДБИРАЮТСЯ от измерений
-   (тёмный кадр → поднять яркость; плоский → добавить контраст; тускло → насыщенность;
-   при пересветах/провалах — не усиливаем клиппинг).
+   базовая коррекция eq. В авто-режиме параметры eq ПОДБИРАЮТСЯ от измерений:
+   тёмный кадр → поднять яркость сдвигом; СВЕТЛЫЙ кадр → затемнить ГАММОЙ, не
+   сдвигом (сдвиг вниз валит тени в чёрное), с автоподбором гаммы под потолок
+   провалов 5%; плоский → добавить контраст; тускло → насыщенность.
 3. Сглаживание кожи — через OpenCV: Haar-каскад находит лицо, по YCrCb строим
    маску кожи ВНУТРИ лица, сглаживаем bilateralFilter только кожу (глаза, брови,
    волосы, фон не трогаем). Уровень off/low/medium/high.
@@ -118,16 +119,21 @@ def ffprobe_dims_fps(ffprobe, path):
     return None, None, None
 
 
-def measure(ffmpeg, path):
+def measure(ffmpeg, path, pre=None):
     """
     Содержимое кадра через signalstats (2 кадра/с). Возвращает dict:
     y_avg, y_spread (средний тональный размах YHIGH-YLOW), sat_avg,
     highlights_pct (доля кадров с почти белым YMAX>=254),
     shadows_pct (доля кадров с почти чёрным YMIN<=1).
+
+    pre — фильтр (например eq=...), вставляемый ПЕРЕД signalstats. Так можно
+    предсказать результат правки БЕЗ перекодирования (выход в null): меряем,
+    во что превратится кадр после eq, и подбираем гамму под потолок провалов.
     """
+    vf = "fps=2," + (pre + "," if pre else "") + "signalstats,metadata=print:file=-"
     _, out, err = run([
         ffmpeg, "-hide_banner", "-i", path,
-        "-vf", "fps=2,signalstats,metadata=print:file=-", "-f", "null", "-",
+        "-vf", vf, "-f", "null", "-",
     ])
     text = out + "\n" + err
 
@@ -159,7 +165,67 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
-def derive_grade(stats, cfg):
+# Потолок провалов в тенях при затемнении: доля кадров с почти чёрным (YMIN<=1).
+# Выше него уходить нельзя — иначе тени валятся в чёрное (то, что видела Анна).
+SHADOW_LIMIT = 5.0
+GAMMA_FLOOR = 0.40   # темнее этой гаммы не идём даже без провалов
+
+
+def eq_str(p):
+    return (f"eq=contrast={p['contrast']}:brightness={p['brightness']}"
+            f":saturation={p['saturation']}:gamma={p['gamma']}")
+
+
+def darken_by_gamma(ffmpeg, src, params, tb, y):
+    """
+    Затемняем ГАММОЙ, не сдвигом яркости. Сдвиг яркости вниз вычитает ровно
+    столько из каждого пикселя и упирает тени в 0 — они валятся в чёрное. Гамма
+    гнёт кривую: средние и светлые тона опускаются, чёрная точка остаётся на 0,
+    новых провалов почти не появляется.
+
+    Идём гаммой сверху вниз шагом 0.02. Старт — от аналитической оценки (по
+    средней яркости), чтобы не мерить лишние светлые шаги на длинных клипах. На
+    каждом шаге меряем ПРЕДСКАЗАННЫЕ провалы (signalstats с eq, без
+    перекодирования). Останавливаемся на самой тёмной гамме, где провалы <=
+    SHADOW_LIMIT; если яркость дошла до цели раньше — останавливаемся на ней.
+    Возвращает (gamma, predicted_stats, notes).
+    """
+    import math
+    step = 0.02
+    # eq gamma: out = in^(1/gamma). Оценка гаммы, чтобы средняя y дошла до tb.
+    # Берём с запасом светлее (+0.08), дальше шагаем вниз до провалов/цели.
+    g_start = 1.0
+    if 0 < tb < 255 and 0 < y < 255:
+        g_est = math.log(y / 255.0) / math.log(tb / 255.0)
+        g_start = clamp(g_est + 0.08, GAMMA_FLOOR, 1.0)
+        g_start = round(round(g_start / step) * step, 3)
+    trial = dict(params)
+    trial["brightness"] = 0.0
+    best_g, best_stats, notes = 1.0, None, []
+    g = g_start
+    while g >= GAMMA_FLOOR - 1e-9:
+        trial["gamma"] = round(g, 3)
+        st = measure(ffmpeg, src, pre=eq_str(trial))
+        if st is None:
+            return 1.0, None, ["замер с eq не удался — гамму не трогаю"]
+        if st["shadows_pct"] > SHADOW_LIMIT:
+            notes.append(f"гамма {round(g, 2)}: провалы {st['shadows_pct']}% > "
+                         f"{int(SHADOW_LIMIT)}% — стоп, беру гамму {best_g}")
+            break
+        best_g, best_stats = round(g, 3), st
+        if st["y_avg"] <= tb:
+            notes.append(f"цель яркости {int(tb)} достигнута гаммой {best_g} "
+                         f"(Y={st['y_avg']}, провалы {st['shadows_pct']}%)")
+            return best_g, best_stats, notes
+        g -= step
+    if best_stats is not None and best_stats["y_avg"] > tb:
+        notes.append(f"гаммой до {int(tb)} без провалов не дотянуть — остановился "
+                     f"на Y={best_stats['y_avg']} (гамма {best_g}, "
+                     f"провалы {best_stats['shadows_pct']}%)")
+    return best_g, best_stats, notes
+
+
+def derive_grade(stats, cfg, ffmpeg=None, src=None):
     """Подобрать eq-параметры от измерений (auto=on). Возвращает (params, заметки)."""
     manual = {"brightness": float(cfg["brightness"]), "contrast": float(cfg["contrast"]),
               "saturation": float(cfg["saturation"]), "gamma": float(cfg["gamma"])}
@@ -171,28 +237,46 @@ def derive_grade(stats, cfg):
     tb, tsat = float(cfg["target_brightness"]), float(cfg["target_saturation"])
     notes = []
 
-    b = clamp((tb - y) / 255.0, -0.12, 0.12)
-    if hi > 20 and b > 0:
-        b = min(b, 0.03); notes.append("пересветы → яркость почти не поднимаю")
-    if sh > 20 and b < 0:
-        b = max(b, -0.03); notes.append("провалы → яркость почти не опускаю")
-
     c = clamp(1.0 + (150 - spread) / 600.0, 0.95, 1.15)
     if hi > 20:
         c = min(c, 1.03); notes.append("пересветы → контраст не задираю")
 
-    s = clamp(1.0 + (tsat - sat) / 300.0, 0.9, 1.3)
+    # Потолок насыщенности поднят 1.3 → 1.6 по просьбе Анны: её клип бледнее образца
+    # (SATAVG 11.8 против 18.7 ≈ ×1.6), при потолке 1.3 добавить столько было нельзя.
+    # Насыщенность встала хорошо — логику НЕ трогаем.
+    s = clamp(1.0 + (tsat - sat) / 300.0, 0.9, 1.6)
 
-    g = 1.0
-    if sh > 20:
-        g = 1.08; notes.append("провалы в тенях → поднимаю гамму (осветляю тени)")
-    elif hi > 20:
-        g = 0.96; notes.append("пересветы → опускаю гамму")
+    params = {"brightness": 0.0, "contrast": round(c, 3),
+              "saturation": round(s, 3), "gamma": 1.0}
+
+    if y > tb:
+        # Затемнение — ТОЛЬКО гаммой (сдвиг brightness проваливает тени в чёрное).
+        if ffmpeg and src:
+            g, _pred, dnotes = darken_by_gamma(ffmpeg, src, params, tb, y)
+            params["gamma"] = g
+            notes += dnotes
+        else:
+            # Без ffmpeg (напр. в тестах) — аналитическая оценка, без замера провалов.
+            import math
+            g = 1.0
+            if 0 < tb < 255 and 0 < y < 255:
+                g = clamp(math.log(y / 255.0) / math.log(tb / 255.0), GAMMA_FLOOR, 1.0)
+            params["gamma"] = round(g, 3)
+            notes.append(f"затемнение гаммой ≈{params['gamma']} (без замера провалов)")
+    else:
+        # Осветление — сдвигом яркости вверх (тени от этого не страдают).
+        b = clamp((tb - y) / 255.0, 0.0, 0.12)
+        if hi > 20 and b > 0:
+            b = min(b, 0.03); notes.append("пересветы → яркость почти не поднимаю")
+        params["brightness"] = round(b, 3)
+        if sh > 20:
+            params["gamma"] = 1.08; notes.append("провалы в тенях → поднимаю гамму")
+        elif hi > 20:
+            params["gamma"] = 0.96; notes.append("пересветы → опускаю гамму")
 
     if not notes:
         notes.append("картинка сбалансирована, правки мягкие")
-    return {"brightness": round(b, 3), "contrast": round(c, 3),
-            "saturation": round(s, 3), "gamma": round(g, 3)}, notes
+    return params, notes
 
 
 def grade_color(ffmpeg, src, cfg, stats, out):
@@ -205,9 +289,8 @@ def grade_color(ffmpeg, src, cfg, stats, out):
         desc = f"LUT ({lut})"
         params = None
     else:
-        params, notes = derive_grade(stats, cfg)
-        vf = (f"eq=contrast={params['contrast']}:brightness={params['brightness']}"
-              f":saturation={params['saturation']}:gamma={params['gamma']}")
+        params, notes = derive_grade(stats, cfg, ffmpeg=ffmpeg, src=src)
+        vf = eq_str(params)
         desc = "eq " + json.dumps(params, ensure_ascii=False) + " [" + "; ".join(notes) + "]"
     rc, _, err = run([
         ffmpeg, "-y", "-hide_banner", "-i", src, "-vf", vf,
@@ -352,7 +435,7 @@ def main():
 
     # 2. цвет (eq подбирается от измерений или LUT)
     graded = os.path.join(work_dir, "graded.mp4")
-    color_desc, _ = grade_color(ffmpeg, args.input, cfg, before, graded)
+    color_desc, cparams = grade_color(ffmpeg, args.input, cfg, before, graded)
 
     # 3. сглаживание кожи (OpenCV) + 4. резкость, звук из graded
     level = skin_level(cfg)
@@ -377,11 +460,16 @@ def main():
     # 5. измерение ПОСЛЕ
     w1, h1, _ = ffprobe_dims_fps(ffprobe, args.output)
     after = measure(ffmpeg, args.output)
+    # Провалы ОТ ЗАТЕМНЕНИЯ отдельно: тот же eq на исходнике, ДО перекодировки —
+    # стабильное число (промежуточный x264-файл провалы завышает из-за диапазона).
+    # Разница с готовым файлом = вклад резкости (unsharp), а не затемнения.
+    dark = measure(ffmpeg, args.input, pre=eq_str(cparams)) if cparams else None
 
     color = {
         "resolution_before": f"{w}x{h}",
         "resolution_after": f"{w1}x{h1}",
         "before": before,
+        "dark_only": dark,
         "after": after,
         "color": color_desc,
         "skin_smooth": level,
@@ -395,7 +483,22 @@ def main():
     print(f"Разрешение:    {w}x{h} → {w1}x{h1}" +
           ("  (не изменилось)" if (w, h) == (w1, h1) else "  ВНИМАНИЕ: изменилось!"))
     print(f"Кадр ДО:       {stats_line(before)}")
-    print(f"Кадр ПОСЛЕ:    {stats_line(after)}")
+    print(f"Кадр ПОСЛЕ:    {stats_line(after)}  (готовый файл)")
+    if before and dark and after:
+        tb = float(cfg["target_brightness"])
+        sh_dark = dark["shadows_pct"]
+        sh_final = after["shadows_pct"]
+        verdict = "OK" if sh_dark < SHADOW_LIMIT else f"ВНИМАНИЕ ≥ {int(SHADOW_LIMIT)}%"
+        reached = "цель достигнута" if dark["y_avg"] <= tb + 1 else f"остановился на Y={dark['y_avg']}"
+        print(f"Затемнение:    яркость {before['y_avg']}→{dark['y_avg']} "
+              f"(цель {int(tb)}, {reached}); провалы ОТ ЗАТЕМНЕНИЯ "
+              f"{before['shadows_pct']}%→{sh_dark}% [{verdict}]")
+        if sharpen > 0 and sh_final - sh_dark > SHADOW_LIMIT:
+            print(f"Резкость:      готовый файл {sh_final}% провалов — лишнее "
+                  f"({sh_dark}%→{sh_final}%) рисует резкость (unsharp={sharpen}: "
+                  f"чёрные пиксели на контурах, это НЕ затемнение)")
+        print(f"Насыщенность:  {before['sat_avg']}→{after['sat_avg']} (не трогали); "
+              f"пересветы {before['highlights_pct']}%→{after['highlights_pct']}%")
     print(f"Цвет:          {color_desc}")
     if level == "off":
         print("Кожа:          сглаживание выкл")

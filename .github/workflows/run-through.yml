@@ -1,0 +1,191 @@
+name: run-through
+
+# СКВОЗНОЙ ПРОГОН по кнопке — проверка, сходятся ли этапы друг с другом.
+# Ссылка YouTube → скачать → звук → стабилизация → цвет. Каждый этап сцеплен
+# с предыдущим по РЕАЛЬНОМУ имени файла (clip.mp4 → clip_audio_clean.mp4 →
+# clip_stab.mp4 → clip_color.mp4), как задумано в stages/. Меряем время каждого
+# этапа, ничего не «чиним на ходу»: если этап падает — продолжаем и показываем,
+# где именно сломалось (continue-on-error).
+#
+# НАРЕЗКА (Vizard, 03a) и СУБТИТРЫ (03b) сюда НЕ включены сознательно:
+#  - живой скрипт нарезки vizard_clip.py принимает URL и грузит в облако Vizard,
+#    локальный clip_color.mp4 он прочитать не может — наша обработка на нарезке
+#    теряется. Прогон на сыром URL сжёг бы квоту Vizard и не был бы честным
+#    тестом сцепки. Поэтому останавливаемся перед нарезкой.
+#  - субтитры (subtitles.py) берут ОДИН горизонтальный файл + transcript.json и
+#    не проходят по многим вертикальным клипам Vizard.
+# Это разрывы, а не задача этого прогона их латать — сначала картина целиком.
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Ссылка на видео YouTube'
+        required: true
+        type: string
+        default: 'https://www.youtube.com/watch?v=LjkSHpRdaPk'
+      start:
+        description: 'С какого места брать (мм:сс)'
+        required: false
+        default: '0:00'
+        type: string
+      seconds:
+        description: 'Сколько секунд взять'
+        required: false
+        default: '180'
+        type: string
+  # push по самому файлу на рабочей ветке — чтобы прогон запустился сейчас,
+  # пока workflow ещё не на main (workflow_dispatch требует main).
+  push:
+    branches: ['claude/video-pipeline-scaffold-gacj3u']
+    paths: ['.github/workflows/run-through.yml']
+
+jobs:
+  run-through:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Движок JavaScript — без него yt-dlp не решает n-challenge и не качает видео.
+      - name: Ставим Deno (движок JS)
+        run: |
+          curl -fsSL https://deno.land/install.sh | sh -s -- -y
+          echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+
+      # apt-ffmpeg — им yt-dlp качает и работает audio/color. + OpenCV для цвета.
+      - name: Ставим yt-dlp, ffmpeg, OpenCV
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade "yt-dlp[default]" yt-dlp-ejs "opencv-python-headless<5" numpy
+          ffmpeg -version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+
+      # Статический ffmpeg ТОЛЬКО для стабилизации (знает vidstab fileformat=ascii).
+      # В PATH не добавляем — чтобы yt-dlp пользовался apt-ffmpeg.
+      - name: Ставим статический ffmpeg для стабилизации
+        run: |
+          curl -fsSL -o /tmp/ff.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          mkdir -p "$HOME/ffstatic"
+          tar xf /tmp/ff.tar.xz -C "$HOME/ffstatic" --strip-components=1
+
+      # DeepFilterNet (CPU) — строго совместимые версии (см. audio-fix.yml).
+      - name: Ставим DeepFilterNet (CPU)
+        run: |
+          python -m pip install deepfilternet==0.5.6
+          python -m pip install torch==2.0.1 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Готовим отчёт
+        env:
+          URL: ${{ inputs.url || 'https://www.youtube.com/watch?v=LjkSHpRdaPk' }}
+          START: ${{ inputs.start || '0:00' }}
+          SECONDS_ARG: ${{ inputs.seconds || '180' }}
+        run: |
+          mkdir -p outputs/run
+          {
+            echo "=== СКВОЗНОЙ ПРОГОН ==="
+            echo "url=$URL  start=$START  seconds=$SECONDS_ARG"
+            echo "этап | код | секунды | что вышло"
+            echo "-----------------------------------"
+          } > outputs/run/report.txt
+
+      # --- ЭТАП 1: скачать ---
+      - name: 1) Скачать (fetch_youtube.py)
+        continue-on-error: true
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+          URL: ${{ inputs.url || 'https://www.youtube.com/watch?v=LjkSHpRdaPk' }}
+          START: ${{ inputs.start || '0:00' }}
+          SECONDS_ARG: ${{ inputs.seconds || '180' }}
+        run: |
+          t0=$(date +%s)
+          set +e
+          python scripts/fetch_youtube.py --url "$URL" --output outputs/run/clip.mp4 --start "$START" --seconds "$SECONDS_ARG"
+          rc=$?
+          set -e
+          t1=$(date +%s)
+          echo "1-скачать | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip.mp4 2>/dev/null || echo нет-файла)" >> outputs/run/report.txt
+          exit $rc
+
+      # --- ЭТАП 2: звук ---
+      - name: 2) Звук (audio_clean.py)
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
+          set +e
+          python scripts/audio_clean.py --input outputs/run/clip.mp4 --output outputs/run/clip_audio_clean.mp4
+          rc=$?
+          set -e
+          t1=$(date +%s)
+          echo "2-звук | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip_audio_clean.mp4 2>/dev/null || echo нет-файла)" >> outputs/run/report.txt
+          exit $rc
+
+      # --- ЭТАП 3: стабилизация ---
+      - name: 3) Стабилизация (stabilize.py)
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
+          export STAB_FFMPEG="$HOME/ffstatic/ffmpeg"
+          export STAB_FFPROBE="$HOME/ffstatic/ffprobe"
+          set +e
+          python scripts/stabilize.py --input outputs/run/clip_audio_clean.mp4 --output outputs/run/clip_stab.mp4
+          rc=$?
+          set -e
+          t1=$(date +%s)
+          echo "3-стабилизация | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip_stab.mp4 2>/dev/null || echo нет-файла)" >> outputs/run/report.txt
+          exit $rc
+
+      # --- ЭТАП 4: цвет ---
+      - name: 4) Цвет (color.py)
+        continue-on-error: true
+        run: |
+          t0=$(date +%s)
+          set +e
+          python scripts/color.py --input outputs/run/clip_stab.mp4 --output outputs/run/clip_color.mp4
+          rc=$?
+          set -e
+          t1=$(date +%s)
+          echo "4-цвет | $rc | $((t1-t0)) | $(ls -1s outputs/run/clip_color.mp4 2>/dev/null || echo нет-файла)" >> outputs/run/report.txt
+          exit $rc
+
+      # --- Что получилось на каждом файле (разрешение, длительность, есть ли звук) ---
+      - name: Сводка по файлам
+        if: always()
+        run: |
+          probe () {
+            f="$1"
+            if [ -f "$f" ]; then
+              v=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$f" 2>/dev/null)
+              d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$f" 2>/dev/null)
+              a=$(ffprobe -v error -select_streams a -show_entries stream=codec_name -of csv=p=0 "$f" 2>/dev/null || echo нет)
+              echo "$f: ${v:-?} | ${d:-?}с | звук:${a:-нет}"
+            else
+              echo "$f: НЕТ ФАЙЛА"
+            fi
+          }
+          {
+            echo ""
+            echo "=== СВОДКА ПО ФАЙЛАМ (размер кадра | длительность | звук) ==="
+            probe outputs/run/clip.mp4
+            probe outputs/run/clip_audio_clean.mp4
+            probe outputs/run/clip_stab.mp4
+            probe outputs/run/clip_color.mp4
+          } >> outputs/run/report.txt
+          echo "========== ОТЧЁТ =========="
+          cat outputs/run/report.txt
+
+      - name: Отдаём файлы прогона
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-through
+          path: |
+            outputs/run/clip.mp4
+            outputs/run/clip_audio_clean.mp4
+            outputs/run/clip_stab.mp4
+            outputs/run/clip_color.mp4
+            outputs/run/report.txt
+          if-no-files-found: ignore

@@ -26,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+from typing import NoReturn
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_DIR = os.path.join(ROOT, "logs")
@@ -47,7 +48,7 @@ DEFAULTS = {
 }
 
 
-def die(msg, code):
+def die(msg, code) -> NoReturn:
     print(msg, file=sys.stderr)
     try:
         os.makedirs(LOG_DIR, exist_ok=True)
@@ -276,65 +277,148 @@ def write_pipeline(out_dir, info):
     return True
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--input", required=True, help="outputs/ready/[id]/clip_color.mp4")
-    ap.add_argument("--output", help="куда сохранить (по умолчанию clip_subs.mp4 рядом)")
-    ap.add_argument("--transcript", help="transcript.json (по умолчанию рядом с input)")
-    args = ap.parse_args()
+def ensure_transcript(clip_path, do_transcribe):
+    """
+    Вернуть путь к transcript.json рядом с клипом. Если его нет и разрешено
+    --transcribe — распознаём ЭТОТ клип заново через find_dupes.py (пересчёт
+    таймингов под конкретный клип: тайминги горизонтали к перерезанному Vizard
+    клипу не подходят). Возвращает путь или None.
+    """
+    d = os.path.dirname(os.path.abspath(clip_path)) or "."
+    tj = os.path.join(d, "transcript.json")
+    if os.path.exists(tj):
+        return tj
+    if not do_transcribe:
+        return None
+    fd = os.path.join(os.path.dirname(os.path.abspath(__file__)), "find_dupes.py")
+    print(f"  распознаю клип заново (find_dupes.py) для {clip_path} …")
+    rc, out, err = run([sys.executable, fd, "--input", clip_path])
+    if rc != 0:
+        print(f"  find_dupes.py не смог распознать: {err.strip()[-400:] or out.strip()[-400:]}")
+        return None
+    return tj if os.path.exists(tj) else None
 
-    ffmpeg = shutil.which("ffmpeg")
-    ffprobe = shutil.which("ffprobe")
-    if not ffmpeg or not ffprobe:
-        die("нет ffmpeg/ffprobe → blocked", 3)
-    if not os.path.exists(args.input):
-        die(f"нет входного файла: {args.input}", 2)
 
-    out_dir = os.path.dirname(os.path.abspath(args.input)) or "."
-    transcript = args.transcript or os.path.join(out_dir, "transcript.json")
-    if not os.path.exists(transcript):
-        die(f"нет расшифровки {transcript} — сначала прогнать find_dupes.py "
-            "(распознаём только там, второй раз не распознаём) → blocked", 4)
-    output = args.output or os.path.join(out_dir, "clip_subs.mp4")
-    work_dir = os.path.join(out_dir, "work")
+def process_clip(ffmpeg, ffprobe, cfg, input_path, output_path, transcript_path):
+    """Собрать и вжечь субтитры в один клип. Возвращает info-словарь."""
+    work_dir = os.path.join(os.path.dirname(os.path.abspath(input_path)) or ".", "work")
     os.makedirs(work_dir, exist_ok=True)
-
-    cfg = load_config()
-    with open(transcript, encoding="utf-8") as f:
+    with open(transcript_path, encoding="utf-8") as f:
         data = json.load(f)
     segments = data.get("segments", [])
     if not segments:
-        die("в transcript.json нет сегментов", 4)
+        raise RuntimeError("в transcript.json нет сегментов")
 
-    w, h = video_size(ffprobe, args.input)
+    w, h = video_size(ffprobe, input_path)
     groups = make_groups(segments, cfg["words_per_screen"])
     events = make_events(groups, cfg)
     if not events:
-        die("не удалось собрать субтитры из расшифровки", 4)
+        raise RuntimeError("не удалось собрать субтитры из расшифровки")
 
     ass_path = os.path.join(work_dir, "subs.ass")
     style = build_ass(events, cfg, w, h, ass_path)
-    burn(ffmpeg, args.input, ass_path, output)
+    burn(ffmpeg, input_path, ass_path, output_path)
 
     info = {"groups": len(groups), "events": len(events),
             "words_per_screen": cfg["words_per_screen"],
             "highlight": cfg["highlight_on"], "highlight_color": cfg["highlight_color"],
             "font_px": style["font_px"], "outline_px": style["outline_px"],
             "margin_bottom_px": style["margin_bottom_px"], "resolution": f"{w}x{h}"}
+    return info
+
+
+def find_clips(clips_dir):
+    """Клипы Vizard: сначала подпапки clip_*/clip.mp4, иначе *.mp4 в корне папки."""
+    clips = []
+    for name in sorted(os.listdir(clips_dir)):
+        sub = os.path.join(clips_dir, name)
+        cand = os.path.join(sub, "clip.mp4")
+        if os.path.isdir(sub) and os.path.exists(cand):
+            clips.append(cand)
+    if not clips:
+        clips = [os.path.join(clips_dir, f) for f in sorted(os.listdir(clips_dir))
+                 if f.lower().endswith(".mp4") and not f.endswith("_subs.mp4")]
+    return clips
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input", help="один файл: outputs/ready/[id]/clip_color.mp4")
+    ap.add_argument("--clips-dir", help="папка с вертикальными клипами Vizard (проход по всем)")
+    ap.add_argument("--output", help="куда сохранить (по умолчанию clip_subs.mp4 рядом)")
+    ap.add_argument("--transcript", help="transcript.json (по умолчанию рядом с input)")
+    ap.add_argument("--transcribe", action="store_true",
+                    help="если у клипа нет transcript.json — распознать его заново (find_dupes.py)")
+    args = ap.parse_args()
+
+    if bool(args.input) == bool(args.clips_dir):
+        die("укажи ровно одно: --input <файл> ИЛИ --clips-dir <папка>", 2)
+
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    if not ffmpeg or not ffprobe:
+        die("нет ffmpeg/ffprobe → blocked", 3)
+
+    cfg = load_config()
+
+    # --- Много клипов (нарезка Vizard) ---
+    if args.clips_dir:
+        if not os.path.isdir(args.clips_dir):
+            die(f"нет папки клипов: {args.clips_dir}", 2)
+        clips = find_clips(args.clips_dir)
+        if not clips:
+            die(f"в {args.clips_dir} не нашёл клипов (clip_*/clip.mp4 или *.mp4)", 2)
+        print(f"=== ОТЧЁТ subtitles (клипов: {len(clips)}) ===")
+        print(f"Конфиг: {cfg['_config_status']}")
+        ok, failed = 0, 0
+        for clip in clips:
+            out = os.path.join(os.path.dirname(clip), "clip_subs.mp4")
+            tj = ensure_transcript(clip, args.transcribe)
+            if not tj:
+                print(f"[✗] {clip}: нет расшифровки (и не смог распознать) — пропускаю")
+                failed += 1
+                continue
+            try:
+                info = process_clip(ffmpeg, ffprobe, cfg, clip, out, tj)
+                print(f"[✓] {clip} ({info['resolution']}): {info['groups']} строк, "
+                      f"{info['events']} событий → {out}")
+                ok += 1
+            except (RuntimeError, ValueError) as e:
+                print(f"[✗] {clip}: {e}")
+                failed += 1
+        print(f"ИТОГО: с субтитрами {ok}, не вышло {failed}")
+        print("=======================")
+        if ok == 0:
+            die("ни один клип не получил субтитры → blocked", 4)
+        return
+
+    # --- Один файл (как раньше) ---
+    if not os.path.exists(args.input):
+        die(f"нет входного файла: {args.input}", 2)
+    out_dir = os.path.dirname(os.path.abspath(args.input)) or "."
+    transcript = args.transcript or ensure_transcript(args.input, args.transcribe)
+    if not transcript or not os.path.exists(transcript):
+        die(f"нет расшифровки рядом с {args.input} — сначала прогнать find_dupes.py "
+            "(или задать --transcribe) → blocked", 4)
+    output = args.output or os.path.join(out_dir, "clip_subs.mp4")
+    try:
+        info = process_clip(ffmpeg, ffprobe, cfg, args.input, output, transcript)
+    except (RuntimeError, ValueError) as e:
+        die(f"{e} → blocked", 4)
     wrote = write_pipeline(out_dir, info)
 
     print("=== ОТЧЁТ subtitles ===")
     print(f"Конфиг:       {cfg['_config_status']}")
-    print(f"Вход:         {args.input}  ({w}x{h})")
-    print(f"Расшифровка:  {transcript} (переиспользована, не распознавал заново)")
-    print(f"Субтитров:    {len(groups)} строк по ≤{cfg['words_per_screen']} слов")
+    print(f"Вход:         {args.input}  ({info['resolution']})")
+    print(f"Расшифровка:  {transcript}")
+    print(f"Субтитров:    {info['groups']} строк по ≤{cfg['words_per_screen']} слов")
     print(f"Подсветка:    {'ВКЛ, цвет #' + cfg['highlight_color'] + ' (жёлтым звучащее слово)' if cfg['highlight_on'] else 'выкл'}"
-          + (f", событий {len(events)}" if cfg['highlight_on'] else ""))
+          + (f", событий {info['events']}" if cfg['highlight_on'] else ""))
     print(f"Шрифт:        {cfg['font']}"
-          f"{' bold' if cfg.get('bold') else ''}, {style['font_px']} px "
+          f"{' bold' if cfg.get('bold') else ''}, {info['font_px']} px "
           f"({cfg['font_size_pct']}% меньшей стороны)")
-    print(f"Обводка:      {style['outline_px']} px, цвет #{cfg['outline_color']}, текст #{cfg['text_color']}")
-    print(f"Положение:    внизу, отступ {style['margin_bottom_px']} px от края")
+    print(f"Обводка:      {info['outline_px']} px, цвет #{cfg['outline_color']}, текст #{cfg['text_color']}")
+    print(f"Положение:    внизу, отступ {info['margin_bottom_px']} px от края")
     print(f"Файл:         {output}")
     print(f"pipeline.json: {'обновлён (current.subtitles)' if wrote else 'не трогал (нет current с этим id)'}")
     print("=======================")

@@ -1,5 +1,7 @@
 # Промежуточные файлы обработки (стираются на каждой машине)
 work/
+# Выходы этапов (клипы, отчёты, json прогонов) — в репозиторий не кладём
+outputs/
 # Кэш Python
 __pycache__/
 *.pyc
@@ -8,6 +10,46 @@ __pycache__/
 *.mkv
 *.webm
 *.wav
+*.m4a
 # Но обложки/субтитры проверки хранить нужно
 !review/*.jpg
 !review/*.srt
+
+# кэш скачанного с Pexels (не коммитим)
+assets/inserts/_cache/
+
+# рантайм-лог DeepFilterNet (пишется рядом с моделью при запуске deepFilter)
+presets/deepfilternet/*/enhance.log
+
+# веса моделей ClearVoice (качаются в рабочую папку при запуске, ~200 МБ)
+checkpoints/
+# HyperFrames (HeyGen, Apache 2.0) — ставится локально `npx skills add heygen-com/hyperframes`.
+# Инструмент, в git не храним (20 МБ). Файлы остаются на диске для работы.
+.agents/
+skills-lock.json
+.claude/skills/captions-overlay
+.claude/skills/changelog-video
+.claude/skills/cut-the-curve
+.claude/skills/embedded-captions
+.claude/skills/faceless-explainer
+.claude/skills/figma
+.claude/skills/general-video
+.claude/skills/hyperframes
+.claude/skills/hyperframes-animation
+.claude/skills/hyperframes-audio
+.claude/skills/hyperframes-cli
+.claude/skills/hyperframes-core
+.claude/skills/hyperframes-creative
+.claude/skills/hyperframes-keyframes
+.claude/skills/hyperframes-registry
+.claude/skills/media-use
+.claude/skills/motion-doctrine
+.claude/skills/motion-graphics
+.claude/skills/music-to-video
+.claude/skills/oversized-cursor
+.claude/skills/pr-to-video
+.claude/skills/product-launch-video
+.claude/skills/remotion-to-hyperframes
+.claude/skills/seam-craft
+.claude/skills/slideshow
+.claude/skills/talking-head-recut
