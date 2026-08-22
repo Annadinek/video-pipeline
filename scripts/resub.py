@@ -32,7 +32,8 @@ BLUR_BAND = float(os.environ.get("BLUR_BAND", "0.18"))
 # Размер новых субтитров (шрифт ASS). «Маленькие» — 44.
 FONT_SIZE = int(os.environ.get("FONT_SIZE", "44"))
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
-MAX_WORDS_PER_LINE = 4
+# Слов в строке субтитров. Меньше — компактнее, не вылезает за кадр. По умолчанию 4.
+MAX_WORDS_PER_LINE = int(os.environ.get("MAX_WORDS", "4"))
 
 # Мусор, который Whisper выдумывает на тишине/шуме — вычищаем.
 JUNK = re.compile(r"^\s*[\[(]?\s*(музык\w*|аплодисмент\w*|смех|вдох|субтитры[^)]*|"
@@ -89,7 +90,13 @@ def ass_time(t):
 
 
 def build_ass(words, path):
-    """Маленькие субтитры с караоке: белый текст, текущее слово зелёное."""
+    """Караоке-субтитры: белый текст, произносимое слово подсвечивается.
+    Цвет подсветки и толщина обводки настраиваются через env:
+      SUB_HL — цвет произносимого слова в ASS (&HAABBGGRR): по умолчанию зелёный.
+               green=&H0000FF00, yellow=&H0000FFFF, white=&H00FFFFFF.
+      SUB_OUTLINE — толщина чёрной обводки (по умолчанию 2)."""
+    hl = os.environ.get("SUB_HL", "&H0000FF00")       # цвет спетого слова
+    outline = os.environ.get("SUB_OUTLINE", "2")
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -98,7 +105,7 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Def,DejaVu Sans,{FONT_SIZE},&H0000FF00,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,0,2,60,60,150,1
+Style: Def,DejaVu Sans,{FONT_SIZE},{hl},&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,{outline},0,2,60,60,150,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

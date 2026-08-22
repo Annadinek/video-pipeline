@@ -1,0 +1,53 @@
+# publish_video.yml — выложить видео на канал: заголовок + описание + обложка + public.
+name: publish-video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "ID видео на YouTube (уже загруженного)"
+        required: true
+        default: "0FpSB68ZaM8"
+      title:
+        description: "Заголовок"
+        required: true
+        default: "Зачем мы живём? В чём смысл жизни? Про опыт — то что до ума!"
+      desc_file:
+        description: "Файл с описанием"
+        required: false
+        default: "assets/NtX08PXq7i8/description.txt"
+      thumb:
+        description: "Обложка (jpg)"
+        required: false
+        default: "assets/NtX08PXq7i8/cover_2.jpg"
+      privacy:
+        description: "public / unlisted"
+        required: false
+        default: "public"
+
+concurrency:
+  group: publish-video
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+      YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+      YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      VIDEO_ID: ${{ github.event.inputs.video_id }}
+      VIDEO_TITLE: ${{ github.event.inputs.title }}
+      DESC_FILE: ${{ github.event.inputs.desc_file || 'assets/NtX08PXq7i8/description.txt' }}
+      THUMB: ${{ github.event.inputs.thumb || 'assets/NtX08PXq7i8/cover_2.jpg' }}
+      PRIVACY: ${{ github.event.inputs.privacy || 'public' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: |
+          python3 -m pip install --quiet requests \
+            google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+      - name: Выложить видео
+        run: python3 scripts/publish_video.py

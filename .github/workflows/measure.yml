@@ -1,0 +1,100 @@
+# measure.yml — ИЗМЕРЯЕТ качество (ничего не подбирает): исходник vs клип Vizard
+# vs наш vertical_cut.py на том же исходнике. Пишет цифры в assets/measure/report.md.
+name: measure-quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Горизонтальный исходник (тот, что резал Vizard)"
+        required: false
+        default: "CuAcjA0lWr4"
+      project_id:
+        description: "Готовый проект Vizard, из него берём реальный клип"
+        required: false
+        default: "33108048"
+      seg_start:
+        description: "С какой секунды взять кусок для нашей нарезки"
+        required: false
+        default: "120"
+      seg_len:
+        description: "Длина куска (сек) для нашей нарезки"
+        required: false
+        default: "60"
+
+concurrency:
+  group: measure-quality
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      SOURCE: ${{ github.event.inputs.source || 'CuAcjA0lWr4' }}
+      PROJECT_ID: ${{ github.event.inputs.project_id || '33108048' }}
+      SEG_START: ${{ github.event.inputs.seg_start || '120' }}
+      SEG_LEN: ${{ github.event.inputs.seg_len || '60' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet -U --pre yt-dlp
+          python3 -m pip install --quiet requests opencv-python-headless numpy pillow
+          if ! command -v deno >/dev/null 2>&1; then
+            curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
+            echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          fi
+          mkdir -p work
+          if [ -n "${YT_COOKIES}" ]; then printf '%s' "$YT_COOKIES" > work/cookies.txt; fi
+
+      - name: 1) Скачать горизонтальный исходник (best)
+        run: |
+          set -e
+          ARGS="--remote-components ejs:github --extractor-args youtube:player_client=web_safari,web,tv --retries 5"
+          [ -f work/cookies.txt ] && ARGS="$ARGS --cookies work/cookies.txt"
+          yt-dlp $ARGS -S "res,ext:mp4:m4a" -f "bv*+ba/b" --merge-output-format mp4 \
+            -o work/src.mp4 "https://www.youtube.com/watch?v=$SOURCE"
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x work/src.mp4
+
+      - name: 2) Забрать реальный клип Vizard
+        run: python3 scripts/fetch_vizard_clip.py "$PROJECT_ID" work/vizard.mp4 0 || echo "VIZARD_FAIL=1" >> "$GITHUB_ENV"
+
+      - name: 3) Наш vertical_cut.py на том же куске исходника
+        run: |
+          set -e
+          ffmpeg -y -ss "$SEG_START" -t "$SEG_LEN" -i work/src.mp4 \
+            -c:v libx264 -preset veryfast -crf 18 -c:a aac -b:a 192k work/seg.mp4 -loglevel error
+          python3 scripts/vertical_cut.py --input work/seg.mp4 --output work/ours.mp4 --face-tracking true
+
+      - name: 4) Измерить всё
+        run: |
+          python3 scripts/measure_quality.py \
+            "Исходник (до Vizard)" work/src.mp4 \
+            "Наш vertical_cut.py" work/ours.mp4 \
+            "Клип Vizard" work/vizard.mp4
+
+      - name: 5) Кадр из каждого (для глаз)
+        if: always()
+        run: |
+          for f in src ours vizard; do
+            [ -f work/$f.mp4 ] && ffmpeg -y -ss 2 -i work/$f.mp4 -frames:v 1 -q:v 2 assets/measure/frame_$f.jpg -loglevel error || true
+          done
+
+      - name: Закоммитить отчёт
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add assets/measure 2>/dev/null || true
+          git commit -m "замер: резкость и звук — исходник vs Vizard vs наш vertical_cut" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
+          done

@@ -1,0 +1,28 @@
+{
+  "covers": [
+    {
+      "frame": "assets/NtX08PXq7i8/cand_35.jpg",
+      "face_frac": 0.40,
+      "face_out": 0.32,
+      "fx": 0.31,
+      "fy": 0.44,
+      "lines": [["В ЧЁМ СМЫСЛ", "white"], ["ЖИЗНИ?", "yellow"]]
+    },
+    {
+      "frame": "assets/NtX08PXq7i8/cand_21.jpg",
+      "face_frac": 0.34,
+      "face_out": 0.32,
+      "fx": 0.35,
+      "fy": 0.38,
+      "lines": [["В ЧЁМ СМЫСЛ", "white"], ["ЖИЗНИ?", "yellow"]]
+    },
+    {
+      "frame": "assets/NtX08PXq7i8/cand_38.jpg",
+      "face_frac": 0.38,
+      "face_out": 0.32,
+      "fx": 0.37,
+      "fy": 0.42,
+      "lines": [["В ЧЁМ СМЫСЛ", "white"], ["ЖИЗНИ?", "yellow"]]
+    }
+  ]
+}

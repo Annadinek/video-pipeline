@@ -1,0 +1,57 @@
+# video_covers.yml — делает обложки (1280x720) из кадров присланного видео и
+# КОММИТИТ их в assets/<id>/ (кандидаты + 3 готовые обложки). В бот не шлёт —
+# сначала смотрю глазами, потом отправляю отдельно.
+name: video-covers
+
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: "Ссылка или ID видео YouTube"
+        required: true
+        default: "NtX08PXq7i8"
+
+concurrency:
+  group: video-covers
+  cancel-in-progress: false
+
+jobs:
+  covers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      VIDEO_ID: ${{ github.event.inputs.video }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          python3 -m pip install --quiet -U --pre yt-dlp
+          python3 -m pip install --quiet requests pillow numpy
+          if ! command -v deno >/dev/null 2>&1; then
+            curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
+            echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          fi
+          mkdir -p work
+          if [ -n "${YT_COOKIES}" ]; then printf '%s' "$YT_COOKIES" > work/cookies.txt; fi
+      - name: Собрать кадры-кандидаты
+        env:
+          COVER_EVEN: "1"
+          COVER_N: "48"
+          COVER_COLS: "6"
+        run: python3 scripts/video_covers.py "$VIDEO_ID"
+      - name: Закоммитить кандидаты
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add assets 2>/dev/null || true
+          git commit -m "обложки: кадры-кандидаты для $VIDEO_ID" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase origin main && git push origin main && break || sleep $((i*3))
+          done

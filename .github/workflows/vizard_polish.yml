@@ -1,0 +1,64 @@
+# vizard_polish.yml — довести клипы Vizard до полноэкранного вертикального Shorts:
+# заполнить чёрные поля размытым фоном (лицо не зумим) + наложить музыку.
+name: vizard-polish
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Проект Vizard с готовыми клипами"
+        required: true
+        default: "33544062"
+      start:
+        description: "С какого клипа (0 = первый)"
+        required: false
+        default: "0"
+      limit:
+        description: "Сколько клипов обработать"
+        required: false
+        default: "1"
+      send:
+        description: "1 = слать в бот, 0 = только превью-кадры"
+        required: false
+        default: "0"
+      music_file:
+        description: "Фоновая музыка"
+        required: false
+        default: "music/anna_piano.mp3"
+
+concurrency:
+  group: vizard-polish
+  cancel-in-progress: false
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      PROJECT_ID: ${{ github.event.inputs.project_id }}
+      START: ${{ github.event.inputs.start || '0' }}
+      LIMIT: ${{ github.event.inputs.limit || '1' }}
+      SEND: ${{ github.event.inputs.send || '0' }}
+      MUSIC_FILE: ${{ github.event.inputs.music_file || 'music/anna_piano.mp3' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet requests
+      - name: Довести клипы
+        run: python3 scripts/vizard_polish.py
+      - name: Сохранить превью-кадры
+        if: always()
+        run: |
+          git config user.name "video-pipeline-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add assets/vzpolish 2>/dev/null || true
+          git commit -m "vizard-polish: превью полноэкранных шортов" || echo "нечего коммитить"
+          for i in 1 2 3 4; do
+            git pull --rebase --autostash origin main && git push origin main && break || sleep $((i*3))
+          done

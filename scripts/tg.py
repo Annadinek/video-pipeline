@@ -41,6 +41,24 @@ def send_photo(path, caption="", chat_id=None):
     return r.json()["result"]
 
 
+def send_document(path, caption="", chat_id=None):
+    """Отправить видео/файл КАК ДОКУМЕНТ — Telegram НЕ пережимает, качество исходное.
+    Так шлём готовые ролики на выкладку, чтобы не было «размазанности» от сжатия."""
+    url = API.format(token=_token(), method="sendDocument")
+    with open(path, "rb") as f:
+        r = requests.post(
+            url,
+            data={"chat_id": chat_id or config.TELEGRAM_ADMIN_CHAT, "caption": caption[:1024]},
+            files={"document": f},
+            timeout=300,
+        )
+    r.raise_for_status()
+    js = r.json()
+    if not js.get("ok"):
+        raise RuntimeError(f"Telegram sendDocument: {js}")
+    return js["result"]
+
+
 def send_audio(audio, title="", caption="", chat_id=None):
     """Отправить аудио. audio может быть URL (Telegram сам скачает) или путь к файлу."""
     url = API.format(token=_token(), method="sendAudio")
@@ -79,6 +97,23 @@ def send_video(path, caption="", chat_id=None):
 def get_updates(offset=None, timeout=0):
     """Новые сообщения боту. offset = last_update_id + 1 (чтобы не читать старые)."""
     return _call("getUpdates", offset=offset or 0, timeout=timeout)
+
+
+def get_file_path(file_id):
+    """file_id -> путь файла на серверах Telegram (для скачивания)."""
+    res = _call("getFile", file_id=file_id)
+    return res["file_path"]
+
+
+def download_file(file_id, dst):
+    """Скачать файл из бота по file_id в dst. Лимит Bot API ~20 МБ."""
+    path = get_file_path(file_id)
+    url = f"https://api.telegram.org/file/bot{_token()}/{path}"
+    r = requests.get(url, timeout=300)
+    r.raise_for_status()
+    with open(dst, "wb") as f:
+        f.write(r.content)
+    return dst
 
 
 if __name__ == "__main__":

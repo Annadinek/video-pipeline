@@ -1,0 +1,29 @@
+# send_photo.yml — отправить одну картинку из репозитория в бот.
+name: send-photo
+
+on:
+  workflow_dispatch:
+    inputs:
+      path:
+        description: "Путь к картинке в репозитории"
+        required: true
+        default: "assets/NtX08PXq7i8/car_sheet.jpg"
+      caption:
+        description: "Подпись"
+        required: false
+        default: "Горизонтальные кадры из твоего видео. Напиши номер, где смотришь на экран — из него сделаю обложку."
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      PHOTO_PATH: ${{ github.event.inputs.path }}
+      PHOTO_CAPTION: ${{ github.event.inputs.caption }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Библиотеки
+        run: python3 -m pip install --quiet requests
+      - name: Отправить картинку в бот
+        run: python3 scripts/send_photo.py "$PHOTO_PATH" "$PHOTO_CAPTION"

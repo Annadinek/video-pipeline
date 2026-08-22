@@ -1,0 +1,36 @@
+# send_audio.yml — прислать в бот звуковую дорожку видео КАК ЕСТЬ (без обработки).
+name: send-audio
+
+on:
+  workflow_dispatch:
+    inputs:
+      video:
+        description: "Ссылка или ID видео (возьмём его звук)"
+        required: true
+        default: "0FpSB68ZaM8"
+
+jobs:
+  audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      YT_COOKIES: ${{ secrets.YT_COOKIES }}
+      AUDIO_VIDEO: ${{ github.event.inputs.video }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+          sudo sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet -U --pre yt-dlp
+          python3 -m pip install --quiet requests
+          if ! command -v deno >/dev/null 2>&1; then
+            curl -fsSL https://deno.land/install.sh | sh >/dev/null 2>&1 || true
+            echo "$HOME/.deno/bin" >> "$GITHUB_PATH"
+          fi
+          mkdir -p work
+          if [ -n "${YT_COOKIES}" ]; then printf '%s' "$YT_COOKIES" > work/cookies.txt; fi
+      - name: Прислать аудио в бот
+        run: python3 scripts/send_audio_from_video.py "$AUDIO_VIDEO"

@@ -1,163 +1,109 @@
 #!/usr/bin/env python3
-"""
-our_clip.py — сквозная сборка ОДНОГО ролика полностью НАШИМИ средствами.
+# our_clip.py — НАША нарезка вертикали 9:16 вместо Vizard.
+# Замер показал: наша нарезка вдвое чётче Vizard (33.4 против 15.1), а у Vizard
+# нет настройки качества. Поэтому режем сами.
+#
+# Что делает:
+#   1) скачивает исходник (макс. качество);
+#   2) вырезает кусок [SEG_START, SEG_START+SEG_LEN] копией потока (без пересжатия);
+#   3) ведёт кадр по лицу (vertical_cut) → окно 9:16;
+#   4) распознаёт речь на куске и вшивает субтитры (эталонный стиль);
+#   5) ОДИН проход ffmpeg: кроп→масштаб 1080×1920→субтитры, видео кодируем один раз,
+#      ЗВУК копируем потоком (-c:a copy) — настройки звука из исходника не теряются;
+#   6) заливает unlisted и шлёт ссылку в бот.
+#
+# Vizard остаётся в коде (vizard_clip.py), но по умолчанию НЕ используется.
 
-Цепочка (решение Анны, 2026-08-16):
-    скачать → color.py → vertical_cut.py → субтитры → вставки
-
-ЗВУК В КОНВЕЙЕРЕ НЕ ОБРАБАТЫВАЕМ. Анна чистит звук вручную в CapCut ДО загрузки.
-Здесь звук копируется ПОТОКОМ с начала до конца — каждый шаг идёт с `-c:a copy`,
-исходная дорожка доходит до финала нетронутой. `audio_clean.py` из цепочки убран
-(сам скрипт остаётся в коде, но тут не вызывается; presets/audio.json не трогаем).
-
-Шаги:
-  1. скачать      fetch_youtube.py → clip.mp4          (--url ...; либо --source готовый файл)
-  2. цвет         color.py         → clip_color.mp4
-  3. вертикаль    vertical_cut.py  → clip_vertical.mp4  (9:16, слежение за лицом)
-  4. субтитры     subtitles.py     → clip_subs.mp4      (--transcribe: расшифровка find_dupes.py)
-  5. вставки      inserts.py       → clip_inserts.mp4   (переиспользует transcript.json)
-
-Итог: clip_inserts.mp4 — готовый вертикальный клип.
-
-Запуск:
-  scripts/our_clip.py --url https://youtu.be/XXXX --out-dir outputs/run [--start 0:00 --seconds 120]
-  scripts/our_clip.py --source путь/к/clip.mp4 --out-dir outputs/run
-  (--face-tracking false — вертикаль по центру; --no-inserts / --no-subs — пропустить шаг)
-"""
-
-import argparse
+import importlib
 import os
-import shutil
 import subprocess
-import sys
-import time
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPTS = os.path.join(ROOT, "scripts")
-LOG_DIR = os.path.join(ROOT, "logs")
+import tg
+import yt_ops
+
+so = importlib.import_module("subtitles_only")
+vc = importlib.import_module("vertical_cut")
+
+VIDEO = os.environ.get("VIDEO_ID", "").strip()
+SEG_START = float(os.environ.get("SEG_START", "30"))
+SEG_LEN = float(os.environ.get("SEG_LEN", "45"))
+OUT_W, OUT_H = 1080, 1920
 
 
-def die(msg, code=1):
-    print(msg, file=sys.stderr)
+def cut_segment(raw):
+    """Вырезаем кусок копией потока — без пересжатия (звук и видео как есть)."""
+    seg = "work/seg.mp4"
+    subprocess.run(["ffmpeg", "-y", "-ss", str(SEG_START), "-t", str(SEG_LEN),
+                    "-i", raw, "-c", "copy", "-avoid_negative_ts", "make_zero",
+                    seg, "-loglevel", "error"], check=True)
+    return seg
+
+
+def run_step(script, inp, out):
+    """Запустить наш этап (audio_clean.py / color.py) с --input/--output."""
+    print(f"этап {script}: {inp} → {out}")
+    subprocess.run(["python3", os.path.join("scripts", script),
+                    "--input", inp, "--output", out], check=True)
+    return out
+
+
+def crop_window(seg):
+    """Окно 9:16 по лицу. Если слежение недоступно — центр (громко сообщаем)."""
+    width, height = vc.ffprobe_dimensions(seg)
     try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        with open(os.path.join(LOG_DIR, "errors.log"), "a", encoding="utf-8") as f:
-            f.write(f"our_clip: {msg}\n")
-    except OSError:
-        pass
-    sys.exit(code)
-
-
-def step(title, cmd):
-    """Запустить шаг цепочки, показать время и статус. Падает — останавливаем цепочку."""
-    print(f"\n=== {title} ===")
-    print("   " + " ".join(cmd))
-    t0 = time.time()
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    dt = time.time() - t0
-    out = (p.stdout or "").strip()
-    if out:
-        print("   " + out.replace("\n", "\n   "))
-    if p.returncode != 0:
-        err = (p.stderr or "").strip()[-600:]
-        die(f"{title}: шаг упал ({dt:.0f} c)\n{err}", 2)
-    print(f"   [✓] {dt:.0f} c")
-
-
-def audio_line(ffprobe, path):
-    """Короткая строка про звук (для отчёта, что дорожка не менялась)."""
-    p = subprocess.run([ffprobe, "-v", "error", "-select_streams", "a:0",
-                        "-show_entries", "stream=codec_name,sample_rate,channels",
-                        "-of", "default=noprint_wrappers=1:nokey=1", path],
-                       capture_output=True, text=True)
-    vals = [x for x in (p.stdout or "").split() if x.strip()]
-    if len(vals) >= 3:
-        return f"{vals[0]} {vals[1]} Гц, каналов {vals[2]}"
-    return "нет аудиодорожки" if p.returncode == 0 else "?"
+        centers = vc.detect_face_centers(seg, width, height)
+        crop_w, crop_h, x = vc.build_crop_expr(centers, width, height)
+        n_found = sum(1 for _, cx in centers if abs(cx - width / 2) > 1)
+        print(f"слежение за лицом: кадров {len(centers)}, лицо найдено ~{n_found}")
+        return crop_w, crop_h, x, True
+    except Exception as e:  # noqa: BLE001
+        print(f"ВНИМАНИЕ: слежение сорвалось ({e}) — беру центр")
+        crop_w = min(int(round(height * 9 / 16)), width)
+        x = (width - crop_w) // 2
+        return crop_w, height, x, False
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--url", help="ссылка YouTube (скачиваем через fetch_youtube.py)")
-    src.add_argument("--source", help="готовый горизонтальный файл (пропустить скачивание)")
-    ap.add_argument("--out-dir", required=True, help="папка сборки (сюда все clip_*.mp4)")
-    ap.add_argument("--start", default="0:00", help="начало отрезка при скачивании")
-    ap.add_argument("--seconds", type=int, default=120, help="длина отрезка при скачивании")
-    ap.add_argument("--face-tracking", default="true", help="слежение за лицом в vertical_cut")
-    ap.add_argument("--no-subs", action="store_true", help="пропустить субтитры")
-    ap.add_argument("--no-inserts", action="store_true", help="пропустить вставки")
-    args = ap.parse_args()
+    if not VIDEO:
+        raise SystemExit("Не задан VIDEO_ID.")
+    # Цепочка: скачать → кусок (копия) → audio_clean → color → нарезка+субтитры.
+    raw = so.download(VIDEO)
+    seg = cut_segment(raw)                                   # копия потока
+    # 1) ЗВУК: DeepFilterNet + подмес 0.15 + верх + loudnorm −14 (presets/audio.json).
+    aclean = run_step("audio_clean.py", seg, "work/seg_aclean.mp4")
+    # 2) ЦВЕТ: color.py (звук копирует). Дальше звук уже не трогаем — только copy.
+    colored = run_step("color.py", aclean, "work/seg_color.mp4")
 
-    ffprobe = shutil.which("ffprobe")
-    if not ffprobe:
-        die("нет ffprobe → blocked", 3)
-    os.makedirs(args.out_dir, exist_ok=True)
-    py = sys.executable
+    crop_w, crop_h, x, tracked = crop_window(colored)
 
-    clip = os.path.join(args.out_dir, "clip.mp4")
-    clip_color = os.path.join(args.out_dir, "clip_color.mp4")
-    clip_vertical = os.path.join(args.out_dir, "clip_vertical.mp4")
-    clip_subs = os.path.join(args.out_dir, "clip_subs.mp4")
-    clip_inserts = os.path.join(args.out_dir, "clip_inserts.mp4")
+    print("распознаю речь на куске...")
+    words = so.transcribe(colored)
+    ass = so.build_ass(words, "work/subs.ass", OUT_W, OUT_H) if words else None
+    if not words:
+        print("речь не распозналась — вставлю без субтитров")
 
-    print("=== our_clip: сквозная сборка (звук НЕ обрабатываем, копия потока) ===")
+    # 3) НАРЕЗКА 9:16 + субтитры ОДНИМ проходом. Звук — копией потока (уже −14).
+    vf = f"crop={crop_w}:{crop_h}:{x}:0,scale={OUT_W}:{OUT_H}"
+    if ass:
+        vf += f",ass={ass}"
+    out = "work/clip.mp4"
+    subprocess.run(["ffmpeg", "-y", "-i", colored, "-vf", vf,
+                    "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                    "-c:a", "copy", out, "-loglevel", "error"], check=True)
 
-    # 1) скачать / взять готовый файл
-    if args.url:
-        step("1) Скачать (fetch_youtube.py)", [
-            py, os.path.join(SCRIPTS, "fetch_youtube.py"),
-            "--url", args.url, "--output", clip,
-            "--start", args.start, "--seconds", str(args.seconds),
-        ])
-    else:
-        if not os.path.exists(args.source):
-            die(f"нет исходного файла: {args.source}", 2)
-        if os.path.abspath(args.source) != os.path.abspath(clip):
-            shutil.copy(args.source, clip)
-        print(f"\n=== 1) Источник (готовый файл) ===\n   {args.source} → {clip}\n   [✓]")
-
-    src_audio = audio_line(ffprobe, clip)
-    print(f"   звук источника: {src_audio}")
-
-    # 2) цвет
-    step("2) Цвет (color.py)", [
-        py, os.path.join(SCRIPTS, "color.py"), "--input", clip, "--output", clip_color,
-    ])
-
-    # 3) вертикаль 9:16
-    step("3) Вертикаль 9:16 (vertical_cut.py)", [
-        py, os.path.join(SCRIPTS, "vertical_cut.py"),
-        "--input", clip_color, "--output", clip_vertical,
-        "--face-tracking", args.face_tracking,
-    ])
-
-    last = clip_vertical
-    # 4) субтитры
-    if not args.no_subs:
-        step("4) Субтитры (subtitles.py --transcribe)", [
-            py, os.path.join(SCRIPTS, "subtitles.py"),
-            "--input", clip_vertical, "--output", clip_subs, "--transcribe",
-        ])
-        last = clip_subs
-    else:
-        print("\n=== 4) Субтитры — пропущено (--no-subs) ===")
-
-    # 5) вставки
-    if not args.no_inserts:
-        step("5) Вставки (inserts.py)", [
-            py, os.path.join(SCRIPTS, "inserts.py"),
-            "--input", last, "--output", clip_inserts,
-        ])
-        last = clip_inserts
-    else:
-        print("\n=== 5) Вставки — пропущено (--no-inserts) ===")
-
-    final_audio = audio_line(ffprobe, last)
-    print("\n=== ГОТОВО ===")
-    print(f"Итог:   {last}")
-    print(f"Звук:   источник [{src_audio}] → финал [{final_audio}] "
-          f"({'без изменений — копия потока' if final_audio == src_audio else 'ВНИМАНИЕ: дорожка изменилась'})")
+    print("заливаю клип на YouTube (unlisted)...")
+    yt = yt_ops.upload_video(
+        out, "Клип — наша нарезка (без Vizard)",
+        "Тест: наша вертикальная нарезка vertical_cut.py + субтитры, "
+        "звук копией потока. Без Vizard.", privacy="unlisted")
+    vid = yt["id"] if isinstance(yt, dict) else yt
+    link = f"https://youtu.be/{vid}"
+    track_txt = "со слежением за лицом" if tracked else "по центру (слежение не сработало)"
+    tg.send_message(
+        f"Готовый клип: звук audio_clean (DeepFilterNet, −14 LUFS) → цвет → наша "
+        f"нарезка 9:16 {track_txt} → субтитры. Звук обработан один раз, дальше копия.\n{link}\n"
+        f"Кусок {int(SEG_START)}–{int(SEG_START + SEG_LEN)} c. Послушай звук, посмотри резкость и субтитры.")
+    print(f"ГОТОВО: {link} | слежение={tracked} | слов={len(words)}")
 
 
 if __name__ == "__main__":

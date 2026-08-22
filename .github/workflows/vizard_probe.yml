@@ -1,0 +1,30 @@
+# vizard_probe.yml — забрать один клип Vizard и показать его разрешение (диагностика полос).
+name: vizard-probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "Проект Vizard"
+        required: true
+        default: "33544062"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VIZARDAI_API_KEY: ${{ secrets.VIZARDAI_API_KEY }}
+      PROJECT_ID: ${{ github.event.inputs.project_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Инструменты
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          python3 -m pip install --quiet requests
+      - name: Забрать клип и показать разрешение
+        run: |
+          mkdir -p work
+          python3 scripts/fetch_vizard_clip.py "$PROJECT_ID" work/vz.mp4 0
+          echo "=== разрешение и SAR/DAR ==="
+          ffprobe -v error -select_streams v:0 -show_entries stream=width,height,sample_aspect_ratio,display_aspect_ratio -of default work/vz.mp4
